@@ -9,7 +9,8 @@ Type in a city, ZIP code or `lat, lon` and you get current conditions, an hourly
 - **Now**: current conditions, NWS forecast text, today's SPC risk, wind, humidity, pressure trend, visibility, UV, air quality, the next 24 hours as a chart, and a 10-day list you can expand for detail.
 - **Hourly**: 24 hours, 48 hours or 7 days as a chart plus a full table.
 - **Radar**: reflectivity (national mosaic or a single radar), velocity, rotation (storm-relative velocity), echo tops, radar-estimated rainfall (1, 24, 48, 72 hours), future radar (HRRR), satellite (infrared, visible, water vapor), and model wind and temperature maps. Loops, play and step with space and the arrow keys.
-- **Radar overlays**: warnings, watches, advisories, the SPC day 1 outlook, county lines and radar sites. Click a radar site to switch to it.
+- **Radar sites**: every NEXRAD site is a dot on the map. Click one to see just that radar, click it again (or "Back to all radars") to return to the national mosaic. Velocity and rotation start on your nearest radar.
+- **Radar overlays**: warnings, watches, advisories, the SPC day 1 outlook and county lines.
 - **Reflectivity color modes**: IEM default, NWS classic, smooth, soft, color-blind safe and grayscale, plus a cutoff to hide weak echoes and ground clutter.
 - **Outlooks**: SPC days 1 to 8, with categorical, tornado, wind, hail and any-severe maps, hatched significant areas, and the risk at your exact location.
 - **Alerts**: everything active for your location, full text, and a button that jumps to the polygon on the radar.

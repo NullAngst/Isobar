@@ -304,31 +304,49 @@ async function loadSites() {
   } catch {
     sites = [];
   }
-  renderSiteSelect();
+  renderSiteInfo();
   renderSitesLayer();
 }
 
-function renderSiteSelect() {
-  const select = ui.site;
-  if (!select) return;
-  const current = state.settings.radar_site || 'mosaic';
-  const near = nearestSite();
-  const sorted = [...sites];
-  if (state.loc) {
-    const k = Math.cos(state.loc.lat * Math.PI / 180);
-    sorted.sort((a, b) => ((a.lat - state.loc.lat) ** 2 + ((a.lon - state.loc.lon) * k) ** 2) - ((b.lat - state.loc.lat) ** 2 + ((b.lon - state.loc.lon) * k) ** 2));
+function siteById(id) {
+  return sites.find((x) => x.id === id) || null;
+}
+
+function siteName(id) {
+  const x = siteById(id);
+  if (!x) return id ? `K${id}` : '';
+  return `${x.icao || x.id}${x.name ? ` ${x.name}` : ''}`;
+}
+
+function goMosaic() {
+  saveSettings({ radar_site: 'mosaic' });
+  rebuild();
+}
+
+function renderSiteInfo() {
+  // Shows which radar is on screen. Picking one happens by clicking its dot.
+  const box = ui.site;
+  if (!box) return;
+  const p = product();
+  box.replaceChildren();
+  box.hidden = !!(p.noSite || p.field);
+  if (box.hidden) return;
+  const active = activeSite();
+  if (!active || active === 'mosaic') {
+    box.append(
+      el('div', { class: 'site-now' }, p.needsSite ? 'No radar picked' : 'All radars'),
+      el('p', { class: 'hint' }, 'Click a radar dot on the map to see just that radar.'));
+    return;
   }
-  select.replaceChildren(
-    el('option', { value: 'mosaic' }, 'All radars (mosaic)'),
-    el('option', { value: 'auto' }, near ? `Nearest radar (K${near})` : 'Nearest radar'),
-    ...sorted.map((s) => el('option', { value: s.id }, `${s.icao || s.id} ${s.name ? s.name : ''}`)),
-  );
-  select.value = current;
-  if (select.value !== current) select.value = 'mosaic';
-  const siteless = !!(product().noSite || product().field);
-  select.disabled = siteless;
-  const row = select.closest('label');
-  if (row) row.hidden = siteless;
+  const chosen = state.settings.radar_site || 'mosaic';
+  const auto = chosen === 'auto' || (p.needsSite && chosen === 'mosaic');
+  box.append(el('div', { class: 'site-now' },
+    el('span', { class: 'site-dot' }), el('span', {}, siteName(active), auto ? el('span', { class: 'muted' }, ', nearest') : null)));
+  if (p.mosaic) {
+    box.append(el('button', { class: 'link small', onclick: goMosaic }, 'Back to all radars'));
+  } else {
+    box.append(el('p', { class: 'hint' }, `${p.name} comes from one radar at a time. Click another dot to switch.`));
+  }
 }
 
 function renderSitesLayer() {
@@ -336,17 +354,32 @@ function renderSitesLayer() {
     map.removeLayer(sitesLayer);
     sitesLayer = null;
   }
-  if (!state.settings.radar_layers.sites || !sites.length) return;
-  const active = activeSite();
-  sitesLayer = L.layerGroup(sites.map((s) => {
-    const mk = L.circleMarker([s.lat, s.lon], {
-      pane: 'top', radius: s.id === active ? 7 : 5, weight: 2,
-      color: s.id === active ? '#ffffff' : '#9fb2c6', fillColor: s.id === active ? '#3d8bfd' : '#2c3a4a', fillOpacity: 0.95,
+  if (!sites.length) return;
+  const p = product();
+  const active = p.noSite || p.field ? null : activeSite();
+  const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#3d8bfd';
+  sitesLayer = L.layerGroup(sites.map((x) => {
+    const on = x.id === active;
+    const mk = L.circleMarker([x.lat, x.lon], {
+      pane: 'top', radius: on ? 7 : 5, weight: on ? 4 : 1.5, bubblingMouseEvents: false,
+      color: on ? accent : '#ffffff', opacity: on ? 1 : 0.85,
+      fillColor: on ? '#ffffff' : '#5b6b7d', fillOpacity: on ? 1 : 0.9,
+      className: on ? 'site-marker site-active' : 'site-marker',
     });
-    mk.bindTooltip(`${s.icao || s.id}${s.name ? ` ${s.name}` : ''}`, { direction: 'top', offset: [0, -6] });
+    const label = x.icao || x.id;
+    if (on) {
+      mk.bindTooltip(label, { permanent: true, direction: 'right', offset: [8, 0], className: 'site-label' });
+    } else {
+      mk.bindTooltip(`${label}${x.name ? ` ${x.name}` : ''}`, { direction: 'top', offset: [0, -6] });
+    }
     mk.on('click', () => {
-      saveSettings({ radar_site: s.id });
-      if (product().noSite || product().field) saveSettings({ radar_product: 'refl' });
+      if (on) {
+        // Clicking the radar you're already on goes back to the mosaic when the product has one.
+        if (p.mosaic) goMosaic();
+        return;
+      }
+      if (p.noSite || p.field) saveSettings({ radar_product: 'refl' });
+      saveSettings({ radar_site: x.id });
       rebuild();
     });
     return mk;
@@ -370,7 +403,7 @@ async function buildFrames() {
   if (p.field) return out;
 
   if (p.needsSite && !site) {
-    toast('No radar site near this location. Pick one from the site list.');
+    toast('No radar near this location. Click a radar dot on the map to pick one.');
     return out;
   }
 
@@ -657,7 +690,7 @@ function renderProductPanel() {
     }
   }
   ui.options.hidden = !p.options;
-  renderSiteSelect();
+  renderSiteInfo();
 }
 
 function renderLegend() {
@@ -726,7 +759,6 @@ function buildLayersPanel() {
         saveSettings({ radar_layers: { [key]: e.target.checked } });
         if (['warnings', 'watches', 'advisories'].includes(key)) refreshWWA();
         if (key === 'outlook') refreshOutlook();
-        if (key === 'sites') renderSitesLayer();
         if (key === 'counties') setBorders(map, e.target.checked);
       },
     }),
@@ -764,7 +796,6 @@ function buildLayersPanel() {
     toggle('advisories', 'Advisories'),
     toggle('outlook', 'SPC day 1 outlook'),
     toggle('counties', 'County lines'),
-    toggle('sites', 'Radar sites'),
     el('h3', {}, 'Display'),
     el('label', { class: 'field' }, el('span', {}, 'Map'), basemap),
     el('label', { class: 'field' }, el('span', {}, 'Reflectivity colors'), palette),
@@ -792,21 +823,17 @@ export function initRadar(container) {
         saveSettings({ radar_product: p.id });
         if (p.needsSite && (state.settings.radar_site === 'mosaic')) {
           const near = nearestSite();
-          if (near) toast(`Using K${near}, the nearest radar`);
+          if (near) toast(`Using ${siteName(near)}, the nearest radar. Click any dot to switch.`);
         }
         rebuild();
       },
     }, p.name)));
   ui.hint = el('p', { class: 'hint' });
   ui.options = el('div', { class: 'chips' });
-  ui.site = el('select', {
-    'aria-label': 'Radar site',
-    onchange: (e) => { saveSettings({ radar_site: e.target.value }); rebuild(); },
-  });
+  ui.site = el('div', { class: 'site-box' });
 
   const panel = el('div', { class: 'float panel-products' },
-    ui.products, ui.options, ui.hint,
-    el('label', { class: 'field' }, el('span', {}, 'Radar'), ui.site));
+    ui.products, ui.options, ui.hint, ui.site);
 
   const layersBody = buildLayersPanel();
   const layersPanel = el('div', { class: 'float panel-layers', hidden: true }, layersBody);
@@ -847,12 +874,12 @@ export function initRadar(container) {
     if (marker) map.removeLayer(marker);
     marker = locationMarker([state.loc.lat, state.loc.lon]).addTo(map);
     map.setView([state.loc.lat, state.loc.lon], Math.max(map.getZoom(), 7));
-    renderSiteSelect();
+    renderSiteInfo();
     if (state.view === 'radar') rebuild();
     else built = false;
   });
   on('data', () => {
-    renderSiteSelect();
+    renderSiteInfo();
     if (state.settings.radar_site === 'auto' || product().needsSite) {
       if (state.view === 'radar') rebuild({ keepIndex: true });
       else built = false;
@@ -861,6 +888,7 @@ export function initRadar(container) {
   on('settings', (patch) => {
     if ('basemap' in patch || 'theme' in patch || 'carto_key' in patch) applyBasemap(map);
     if ('basemap' in patch && ui.basemap) ui.basemap.value = state.settings.basemap || 'auto';
+    if ('theme' in patch) renderSitesLayer();
     if ('units' in patch && product().field) { renderLegend(); if (fieldLayer) fieldLayer._draw(); }
   });
 
