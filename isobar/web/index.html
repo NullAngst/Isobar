@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Isobar</title>
+  <link rel="icon" href="icon.png">
+  <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+  <link rel="stylesheet" href="css/app.css">
+  <script src="vendor/leaflet/leaflet.js"></script>
+</head>
+<body>
+  <svg class="defs" width="0" height="0" aria-hidden="true" focusable="false">
+    <defs>
+      <pattern id="spc-hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+        <rect width="8" height="8" fill="transparent"/>
+        <line x1="0" y1="0" x2="0" y2="8" stroke="#111" stroke-width="2.2" stroke-opacity="0.75"/>
+      </pattern>
+    </defs>
+  </svg>
+
+  <div id="app">
+    <nav class="rail" aria-label="Views">
+      <div class="rail-logo"><img src="icon.png" alt="" width="30" height="30"></div>
+      <div id="rail-views" class="rail-views"></div>
+      <button id="rail-settings" class="rail-btn" aria-label="Settings" aria-expanded="false"></button>
+    </nav>
+
+    <div class="main">
+      <header class="top">
+        <div class="search">
+          <span id="search-ic" class="search-ic"></span>
+          <input id="search" type="search" placeholder="Search city, ZIP or lat, lon" autocomplete="off" spellcheck="false" aria-label="Search for a place" aria-controls="results">
+          <div id="results" class="results" role="listbox" hidden></div>
+        </div>
+        <div class="place-wrap">
+          <button id="place" class="place" title="Change place">No location</button>
+          <button id="star" class="icon-btn" aria-pressed="false" hidden></button>
+        </div>
+        <div class="top-right">
+          <span id="updated" class="updated"></span>
+          <button id="refresh" class="icon-btn" aria-label="Refresh" title="Refresh"></button>
+        </div>
+      </header>
+
+      <main id="views" class="views" data-full="false">
+        <section id="view-now" class="view view-scroll" hidden></section>
+        <section id="view-hourly" class="view view-scroll" hidden></section>
+        <section id="view-radar" class="view view-map" hidden></section>
+        <section id="view-outlooks" class="view view-map" hidden></section>
+        <section id="view-alerts" class="view view-scroll" hidden></section>
+        <section id="view-discussion" class="view view-scroll" hidden></section>
+      </main>
+    </div>
+  </div>
+
+  <div id="scrim" class="scrim" hidden></div>
+  <aside id="settings" class="drawer" aria-label="Settings" hidden>
+    <div class="drawer-head">
+      <h2>Settings</h2>
+      <button id="settings-close" class="icon-btn" aria-label="Close settings"></button>
+    </div>
+    <div id="settings-body" class="drawer-body"></div>
+  </aside>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
