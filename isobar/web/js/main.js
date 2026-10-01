@@ -311,7 +311,41 @@ function mapKeySection(s) {
       'The dark, light and street maps come from CARTO, which needs a free key. No account, they email it right back. ',
       'Satellite uses Esri and works without one. '),
     el('button', { class: 'link small', onclick: () => openExternal('https://carto.com/basemaps/apikey/') }, 'Get a free CARTO key ', el('span', { html: uiIcon('external', 14) })),
+    cacheRow(),
   ];
+}
+
+const TILE_CACHE = 'isobar-tiles-v1';
+
+function cacheRow() {
+  const row = el('div', { class: 'set-row' });
+  if (!('serviceWorker' in navigator) || !window.caches) {
+    row.append(el('span', { class: 'muted small' }, 'Map tile cache is not available in this browser.'));
+    return row;
+  }
+  const size = el('span', { class: 'set-label' }, 'Map cache');
+  const paint = async () => {
+    try {
+      const cache = await caches.open(TILE_CACHE);
+      const n = (await cache.keys()).length;
+      const est = navigator.storage && navigator.storage.estimate ? await navigator.storage.estimate() : null;
+      const mb = est && est.usage ? Math.round(est.usage / 1048576) : null;
+      size.textContent = `Map cache: ${n.toLocaleString()} tiles${mb !== null ? `, about ${mb} MB` : ''}`;
+    } catch {
+      size.textContent = 'Map cache';
+    }
+  };
+  const clear = el('button', {
+    class: 'btn',
+    onclick: async () => {
+      await caches.delete(TILE_CACHE);
+      toast('Map cache cleared. Tiles download fresh from here on.');
+      paint();
+    },
+  }, 'Clear');
+  row.append(size, clear);
+  paint();
+  return row;
 }
 
 function renderSettings() {
@@ -412,6 +446,12 @@ async function boot() {
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('settings').hidden) closeSettings(); });
 
   window.isobar = { go };
+
+  // Tile cache (web/sw.js). If it fails to register, maps still work, they just
+  // lean on the regular browser cache.
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js').catch((err) => console.warn('tile cache unavailable', err));
+  }
 
   if (state.settings.location) {
     state.loc = state.settings.location;

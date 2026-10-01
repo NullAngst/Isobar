@@ -242,9 +242,15 @@ class Handler(BaseHTTPRequestHandler):
     }
 
 
+# Browsers key stored data by origin, and the port is part of the origin.
+# Using the same port every launch keeps the map tile cache across restarts.
+PREFERRED_PORT = 47130
+
+
 class Server(ThreadingHTTPServer):
     daemon_threads = True
-    allow_reuse_address = True
+    # On Windows SO_REUSEADDR lets a second process bind the same port, so it stays off there.
+    allow_reuse_address = sys.platform != "win32"
 
     def __init__(self, port=0, open_url=None):
         super().__init__(("127.0.0.1", port), Handler)
@@ -261,6 +267,17 @@ class Server(ThreadingHTTPServer):
     @property
     def url(self):
         return f"http://127.0.0.1:{self.server_address[1]}/?t={self.token}"
+
+    @classmethod
+    def create(cls, port=0, open_url=None):
+        """Bind the given port, or the preferred one, or any free one if that's taken."""
+        if port:
+            return cls(port, open_url)
+        try:
+            return cls(PREFERRED_PORT, open_url)
+        except OSError:
+            log.info("port %s busy, using a random port; the map cache won't carry over", PREFERRED_PORT)
+            return cls(0, open_url)
 
     def start(self):
         thread = threading.Thread(target=self.serve_forever, name="isobar-http", daemon=True)

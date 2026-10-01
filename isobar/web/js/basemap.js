@@ -73,8 +73,8 @@ export function applyBasemap(map) {
   const def = BASEMAPS[resolveBasemap()];
   if (holder.base) map.removeLayer(holder.base);
   if (holder.labels) map.removeLayer(holder.labels);
-  holder.base = L.tileLayer(withKey(def.base), { attribution: def.attr, subdomains: 'abcd', maxZoom: 19, detectRetina: false }).addTo(map);
-  holder.labels = L.tileLayer(withKey(def.labels), { pane: 'labels', subdomains: 'abcd', maxZoom: 19 }).addTo(map);
+  holder.base = L.tileLayer(withKey(def.base), { attribution: def.attr, subdomains: 'abcd', maxZoom: 19, detectRetina: false, crossOrigin: 'anonymous' }).addTo(map);
+  holder.labels = L.tileLayer(withKey(def.labels), { pane: 'labels', subdomains: 'abcd', maxZoom: 19, crossOrigin: 'anonymous' }).addTo(map);
   map.getContainer().dataset.basemap = resolveBasemap();
 }
 
@@ -82,7 +82,7 @@ export function setBorders(map, on) {
   const holder = map._isobarBase;
   if (on && !holder.borders) {
     holder.borders = L.tileLayer(`${IEM}/c/tile.py/1.0.0/uscounties/{z}/{x}/{y}.png`, {
-      pane: 'borders', opacity: 0.55, maxZoom: 19, className: 'county-tiles',
+      pane: 'borders', opacity: 0.55, maxZoom: 19, className: 'county-tiles', crossOrigin: 'anonymous',
     }).addTo(map);
   } else if (!on && holder.borders) {
     map.removeLayer(holder.borders);

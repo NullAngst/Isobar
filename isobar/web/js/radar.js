@@ -472,7 +472,7 @@ function clearFrames() {
 function makeLayer(frame) {
   const options = {
     pane: 'radar', opacity: 0, subdomains: '123', maxZoom: 19, maxNativeZoom: 12,
-    updateWhenZooming: false, keepBuffer: 1, className: 'radar-tiles',
+    updateWhenZooming: false, keepBuffer: 1, className: 'radar-tiles', crossOrigin: 'anonymous',
   };
   const layer = frame.recolor ? new RecolorLayer(frame.url, options) : L.tileLayer(frame.url, options);
   layer.on('loading', () => { loading.add(layer); updateLoading(); });

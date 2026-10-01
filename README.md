@@ -16,6 +16,7 @@ Type in a city, ZIP code or `lat, lon` and you get current conditions, an hourly
 - **Alerts**: everything active for your location, full text, and a button that jumps to the polygon on the radar.
 - **Discussion**: your NWS office's Area Forecast Discussion, cleaned up for reading.
 - **Desktop notifications** for new warnings at your saved location, and an optional tray mode so it keeps watching with the window closed.
+- **Map tile cache**: radar frames, county lines and base maps are kept on disk, each until it goes stale, so zooming back out or reopening the app doesn't download them again. Details under "The map cache".
 - Dark, light, midnight or follow-the-system themes, US or metric units, 12 or 24 hour clock, saved places.
 
 ## Download and run
@@ -91,15 +92,35 @@ If Qt WebEngine won't install or won't start on your machine, `python run.py --b
 | Option | What it does |
 | --- | --- |
 | `--browser` | Open the UI in your default browser instead of the app window |
-| `--port N` | Use a fixed local port instead of a random one |
+| `--port N` | Use a different local port (default 47130, or a random one if that's taken) |
 | `--no-sandbox` | Turn off Chromium's sandbox, for setups that block it |
 | `--software-gl` | Render without the GPU, for VMs and broken drivers |
 | `--debug` | Verbose logs, plus a web inspector on port 9222 |
 | `--version` | Print the version and exit |
 
+## The map cache
+
+Every map tile Isobar shows gets saved to disk with an expiry. Until it expires, zooming or panning back to it, switching views, or restarting the app loads it from disk instead of the network. Once it expires, the next time that spot is on screen it downloads fresh and replaces the old copy.
+
+How long a tile stays good depends on what it is:
+
+| Tile | Kept for | Why |
+| --- | --- | --- |
+| Radar mosaic and single-radar scans | 24 hours | Each frame is one timestamped scan, which never changes. New scans have new addresses, so the loop picks them up on its own. |
+| County lines | 30 days | They don't move. |
+| Base maps (CARTO, Esri) | 7 days | Roads and labels change slowly. |
+| Future radar (HRRR) | 20 minutes | A new model run lands every hour. |
+| Echo tops, rainfall, satellite | 4 minutes | These addresses always mean "the latest", so the picture behind them changes. |
+
+If the network drops, Isobar shows an expired tile rather than a blank one.
+
+The cache tops out around 6,000 tiles and drops the oldest past that. Settings, under Maps, shows how big it is and has a Clear button.
+
+The cache is tied to the app's local address, which is why Isobar now always uses port 47130. If something else already has that port, Isobar picks a random one and the cache starts empty for that run. Same thing if you pass a different `--port`.
+
 ## Where it keeps things
 
-Settings (units, theme, saved places, radar choices) live in one JSON file. The cache holds map tiles and web data and is safe to delete.
+Settings (units, theme, saved places, radar choices) live in one JSON file. The cache folder holds the map tiles (under `webengine/storage`) and web data, and is safe to delete.
 
 - Linux: `~/.config/isobar/settings.json` and `~/.cache/isobar/`
 - Windows: `%APPDATA%\Isobar\settings.json` and `%LOCALAPPDATA%\Isobar\Cache\`

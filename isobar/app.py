@@ -23,7 +23,7 @@ log = logging.getLogger("isobar")
 def parse_args(argv=None):
     p = argparse.ArgumentParser(prog="isobar", description=f"{APP_NAME} weather and radar")
     p.add_argument("--browser", action="store_true", help="open the UI in your default browser instead of a window")
-    p.add_argument("--port", type=int, default=0, help="local port for the UI server (default: random)")
+    p.add_argument("--port", type=int, default=0, help="local port for the UI server (default: 47130, or random if busy)")
     p.add_argument("--no-sandbox", action="store_true", help="disable the Chromium sandbox (needed on some Linux setups)")
     p.add_argument("--software-gl", action="store_true", help="render without the GPU (VMs, broken drivers)")
     p.add_argument("--debug", action="store_true", help="verbose logging and web inspector port 9222")
@@ -221,7 +221,7 @@ def main(argv=None):
         level=logging.DEBUG if args.debug else logging.WARNING,
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
-    server = Server(port=args.port)
+    server = Server.create(port=args.port)
     server.start()
 
     if args.browser:
