@@ -6,6 +6,7 @@ import { ago } from './util.js';
 import { renderNow, currentHourIndex } from './now.js';
 import { renderHourly } from './hourly.js';
 import { initRadar, showRadar, hideRadar, focusGeometry } from './radar.js';
+import { needsCartoKey } from './basemap.js';
 import { initOutlooks, showOutlooks } from './outlooks.js';
 import { renderAlerts, renderDiscussion } from './alerts.js';
 
@@ -24,6 +25,7 @@ const inited = { radar: false, outlooks: false };
 let version = '';
 let loadedAt = 0;
 let loadSeq = 0;
+let keyNudged = false;
 
 // ------------------------------------------------------------------ theme
 
@@ -79,6 +81,10 @@ function render(view = state.view) {
   if (view === 'outlooks') {
     if (!inited.outlooks) { initOutlooks(root); inited.outlooks = true; }
     showOutlooks();
+  }
+  if ((view === 'radar' || view === 'outlooks') && !keyNudged && needsCartoKey()) {
+    keyNudged = true;
+    toast('The street maps need a free CARTO key. Add one in Settings, under Maps.');
   }
 }
 
@@ -285,6 +291,29 @@ function select(label, key, options, numeric = false) {
   return el('label', { class: 'set-row' }, el('span', { class: 'set-label' }, label), sel);
 }
 
+function mapKeySection(s) {
+  const input = el('input', {
+    type: 'text', class: 'text-input', value: s.carto_key || '', placeholder: 'Paste your CARTO key',
+    spellcheck: 'false', autocomplete: 'off', 'aria-label': 'CARTO API key',
+  });
+  const saveKey = () => {
+    const value = input.value.trim();
+    if (value === String(state.settings.carto_key || '')) return;
+    saveSettings({ carto_key: value });
+    toast(value ? 'Map key saved. The maps reload with it now.' : 'Map key removed.');
+  };
+  input.addEventListener('change', saveKey);
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { saveKey(); input.blur(); } });
+  return [
+    select('Map style', 'basemap', [['auto', 'Match theme'], ['dark', 'Dark'], ['light', 'Light'], ['streets', 'Streets'], ['satellite', 'Satellite']]),
+    el('label', { class: 'set-block' }, el('span', { class: 'set-label' }, 'CARTO API key'), input),
+    el('p', { class: 'muted small' },
+      'The dark, light and street maps come from CARTO, which needs a free key. No account, they email it right back. ',
+      'Satellite uses Esri and works without one. '),
+    el('button', { class: 'link small', onclick: () => openExternal('https://carto.com/basemaps/apikey/') }, 'Get a free CARTO key ', el('span', { html: uiIcon('external', 14) })),
+  ];
+}
+
 function renderSettings() {
   const body = $('settings-body');
   body.replaceChildren();
@@ -316,6 +345,8 @@ function renderSettings() {
     el('h3', {}, 'Look'),
     seg('Theme', 'theme', [['system', 'System'], ['dark', 'Dark'], ['light', 'Light'], ['midnight', 'Midnight']]),
     select('Open on', 'start_view', VIEWS.map((v) => [v.id, v.name])),
+    el('h3', {}, 'Maps'),
+    ...mapKeySection(s),
     el('h3', {}, 'Radar'),
     select('Loop length', 'radar_loop_minutes', [[30, '30 minutes'], [60, '1 hour'], [90, '90 minutes'], [120, '2 hours'], [180, '3 hours']], true),
     select('Loop speed', 'radar_speed_ms', [[700, 'Slow'], [450, 'Normal'], [250, 'Fast']], true),

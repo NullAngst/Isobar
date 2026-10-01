@@ -60,6 +60,18 @@ The build isn't code signed, so SmartScreen will warn you the first time. Click 
 
 Intel Macs aren't built by the workflow. Run it from source instead (below).
 
+## Set up the map key
+
+The dark, light and street base maps come from CARTO, and CARTO now requires a free API key. Without one the maps still load, but every tile is stamped "API KEY REQUIRED".
+
+1. Go to [carto.com/basemaps/apikey](https://carto.com/basemaps/apikey/) and request a key. No account needed, they email it straight back.
+2. In Isobar, open Settings and find Maps.
+3. Paste the key into "CARTO API key" and press Enter.
+
+The radar and outlook maps reload with the key right away. The key is saved in plain text in `settings.json` (see below), which is fine, since it's sent in every tile URL anyway and grants nothing but basemap tiles.
+
+A wrong key looks exactly like no key: you still get the watermark. If it's still stamped after you paste it, check the key for a stray space or a missing character. If you'd rather skip CARTO entirely, set Map style to Satellite, which comes from Esri and needs no key.
+
 ## Run from source
 
 Prerequisites: Python 3.10 or newer and `git`.
@@ -115,7 +127,7 @@ If you upload the repo through the web UI and the `.github` folder doesn't come 
 - **Radar, satellite, rainfall estimates, HRRR future radar, county lines**: the [Iowa Environmental Mesonet](https://mesonet.agron.iastate.edu/). US only. IEM is a university service run as a public good, so please don't point a hundred copies of this at it from one office.
 - **Warning and watch polygons on the map**: NOAA's watch/warning/advisory map service.
 - **Outlooks**: the [Storm Prediction Center](https://www.spc.noaa.gov/). US only.
-- **Base maps**: CARTO and OpenStreetMap, plus Esri for satellite imagery.
+- **Base maps**: CARTO and OpenStreetMap, plus Esri for satellite imagery. CARTO needs your own free key (see "Set up the map key"); the free tier allows 5 million tile requests a month, which one person panning a radar map won't get near.
 
 Things you should know before relying on it:
 

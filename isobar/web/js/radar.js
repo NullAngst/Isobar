@@ -736,6 +736,7 @@ function buildLayersPanel() {
     onchange: (e) => { saveSettings({ basemap: e.target.value }); },
   }, el('option', { value: 'auto' }, 'Match theme'), ...Object.entries(BASEMAPS).map(([k, v]) => el('option', { value: k }, v.name)));
   basemap.value = s.basemap || 'auto';
+  ui.basemap = basemap;
 
   const palette = el('select', {
     onchange: (e) => { saveSettings({ radar_palette: e.target.value }); repaint(); },
@@ -858,7 +859,8 @@ export function initRadar(container) {
     }
   });
   on('settings', (patch) => {
-    if ('basemap' in patch || 'theme' in patch) applyBasemap(map);
+    if ('basemap' in patch || 'theme' in patch || 'carto_key' in patch) applyBasemap(map);
+    if ('basemap' in patch && ui.basemap) ui.basemap.value = state.settings.basemap || 'auto';
     if ('units' in patch && product().field) { renderLegend(); if (fieldLayer) fieldLayer._draw(); }
   });
 

@@ -19,6 +19,20 @@ export const BASEMAPS = {
   },
 };
 
+const CARTO_HOST = 'basemaps.cartocdn.com';
+
+// CARTO watermarks every tile requested without a key ("API KEY REQUIRED"),
+// and a wrong key looks exactly like no key, so there is nothing to detect.
+function withKey(url) {
+  const key = String(state.settings.carto_key || '').trim();
+  if (!key || !url.includes(CARTO_HOST)) return url;
+  return `${url}${url.includes('?') ? '&' : '?'}key=${encodeURIComponent(key)}`;
+}
+
+export function needsCartoKey() {
+  return BASEMAPS[resolveBasemap()].base.includes(CARTO_HOST) && !String(state.settings.carto_key || '').trim();
+}
+
 export function resolveBasemap() {
   const pick = state.settings.basemap;
   if (pick && pick !== 'auto' && BASEMAPS[pick]) return pick;
@@ -59,8 +73,8 @@ export function applyBasemap(map) {
   const def = BASEMAPS[resolveBasemap()];
   if (holder.base) map.removeLayer(holder.base);
   if (holder.labels) map.removeLayer(holder.labels);
-  holder.base = L.tileLayer(def.base, { attribution: def.attr, subdomains: 'abcd', maxZoom: 19, detectRetina: false }).addTo(map);
-  holder.labels = L.tileLayer(def.labels, { pane: 'labels', subdomains: 'abcd', maxZoom: 19 }).addTo(map);
+  holder.base = L.tileLayer(withKey(def.base), { attribution: def.attr, subdomains: 'abcd', maxZoom: 19, detectRetina: false }).addTo(map);
+  holder.labels = L.tileLayer(withKey(def.labels), { pane: 'labels', subdomains: 'abcd', maxZoom: 19 }).addTo(map);
   map.getContainer().dataset.basemap = resolveBasemap();
 }
 

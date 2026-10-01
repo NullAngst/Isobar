@@ -11,6 +11,7 @@ DEFAULTS = {
     "theme": "system",          # system | dark | light | midnight
     "start_view": "now",        # now | hourly | radar | outlooks | alerts | discussion
     "basemap": "auto",          # auto | dark | light | streets | satellite
+    "carto_key": "",            # free key from carto.com/basemaps/apikey
     "radar_palette": "default",
     "radar_opacity": 0.85,
     "radar_min_dbz": 5,

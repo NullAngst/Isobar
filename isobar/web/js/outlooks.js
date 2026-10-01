@@ -241,7 +241,7 @@ export function initOutlooks(container) {
   });
   on('spc', () => { renderTabs(); renderSummary(); });
   on('settings', (patch) => {
-    if ('basemap' in patch || 'theme' in patch) applyBasemap(map);
+    if ('basemap' in patch || 'theme' in patch || 'carto_key' in patch) applyBasemap(map);
     if ('clock' in patch) draw();
   });
   renderTabs();

@@ -463,6 +463,13 @@ input[type="range"] { accent-color: var(--accent); }
 .drawer-body { padding: 4px 22px 30px; overflow-y: auto; }
 .set-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 0; }
 .set-row.switch { justify-content: flex-start; }
+.set-block { display: flex; flex-direction: column; gap: 6px; padding: 6px 0 8px; }
+.text-input {
+  height: 32px; padding: 0 10px; width: 100%;
+  background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 7px; outline: none;
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace; font-size: 12.5px;
+}
+.text-input:focus { border-color: var(--accent); }
 .set-label { color: var(--ink-2); }
 .drawer .seg { background: var(--bg); }
 .saved-list { display: flex; flex-direction: column; }
