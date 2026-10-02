@@ -335,7 +335,7 @@ function renderSiteInfo() {
   if (!active || active === 'mosaic') {
     box.append(
       el('div', { class: 'site-now' }, p.needsSite ? 'No radar picked' : 'All radars'),
-      el('p', { class: 'hint' }, 'Click a radar dot on the map to see just that radar.'));
+      el('p', { class: 'hint' }, 'Pick a radar dot on the map to see just that radar.'));
     return;
   }
   const chosen = state.settings.radar_site || 'mosaic';
@@ -345,7 +345,7 @@ function renderSiteInfo() {
   if (p.mosaic) {
     box.append(el('button', { class: 'link small', onclick: goMosaic }, 'Back to all radars'));
   } else {
-    box.append(el('p', { class: 'hint' }, `${p.name} comes from one radar at a time. Click another dot to switch.`));
+    box.append(el('p', { class: 'hint' }, `${p.name} comes from one radar at a time. Pick another dot to switch.`));
   }
 }
 
@@ -403,7 +403,7 @@ async function buildFrames() {
   if (p.field) return out;
 
   if (p.needsSite && !site) {
-    toast('No radar near this location. Click a radar dot on the map to pick one.');
+    toast('No radar near this location. Pick a radar dot on the map.');
     return out;
   }
 
@@ -674,6 +674,10 @@ async function refreshOutlook() {
 
 function renderProductPanel() {
   const p = product();
+  if (ui.panelHead) {
+    ui.panelHead.replaceChildren(el('span', {}, p.name), el('span', { class: 'panel-chev', html: uiIcon('chevron', 16) }));
+    ui.panelHead.setAttribute('aria-expanded', String(ui.panel.classList.contains('open')));
+  }
   ui.products.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.id === p.id)));
   ui.hint.textContent = p.hint || '';
   ui.options.replaceChildren();
@@ -820,10 +824,11 @@ export function initRadar(container) {
     ...PRODUCTS.map((p) => el('button', {
       class: 'product', dataset: { id: p.id }, 'aria-pressed': 'false',
       onclick: () => {
+        if (ui.panel) ui.panel.classList.remove('open');
         saveSettings({ radar_product: p.id });
         if (p.needsSite && (state.settings.radar_site === 'mosaic')) {
           const near = nearestSite();
-          if (near) toast(`Using ${siteName(near)}, the nearest radar. Click any dot to switch.`);
+          if (near) toast(`Using ${siteName(near)}, the nearest radar. Pick any dot to switch.`);
         }
         rebuild();
       },
@@ -832,8 +837,17 @@ export function initRadar(container) {
   ui.options = el('div', { class: 'chips' });
   ui.site = el('div', { class: 'site-box' });
 
-  const panel = el('div', { class: 'float panel-products' },
-    ui.products, ui.options, ui.hint, ui.site);
+  // On narrow screens the panel folds down to this one button (see app.css).
+  ui.panelHead = el('button', {
+    class: 'panel-head', 'aria-expanded': 'false',
+    onclick: () => {
+      const open = ui.panel.classList.toggle('open');
+      ui.panelHead.setAttribute('aria-expanded', String(open));
+    },
+  });
+  const panel = el('div', { class: 'float panel-products collapsible' },
+    ui.panelHead, ui.products, ui.options, ui.hint, ui.site);
+  ui.panel = panel;
 
   const layersBody = buildLayersPanel();
   const layersPanel = el('div', { class: 'float panel-layers', hidden: true }, layersBody);

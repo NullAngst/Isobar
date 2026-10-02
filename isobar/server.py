@@ -8,6 +8,7 @@ in a browser from poking at it through DNS rebinding.
 import json
 import logging
 import mimetypes
+import os
 import secrets
 import sys
 import threading
@@ -150,7 +151,8 @@ class Handler(BaseHTTPRequestHandler):
     # ------------------------------------------------------------ endpoints
 
     def api_version(self, qs):
-        self._json({"version": __version__})
+        # The Android build sets ISOBAR_PLATFORM so the UI can hide desktop-only settings.
+        self._json({"version": __version__, "platform": os.environ.get("ISOBAR_PLATFORM", "desktop")})
 
     def api_settings_get(self, qs):
         self._json(settings.load())

@@ -203,8 +203,9 @@ export function hourlyChart(f, startIdx, hours, { compact = false } = {}) {
     const flip = left + 180 > wrap.scrollLeft + wrap.clientWidth;
     tip.style.left = `${flip ? left - 168 : left + 14}px`;
   };
-  hit.addEventListener('mousemove', move);
-  hit.addEventListener('mouseleave', () => {
+  hit.addEventListener('pointermove', move);
+  hit.addEventListener('pointerdown', move);
+  hit.addEventListener('pointerleave', () => {
     tip.hidden = true;
     guide.setAttribute('visibility', 'hidden');
     dot.setAttribute('visibility', 'hidden');

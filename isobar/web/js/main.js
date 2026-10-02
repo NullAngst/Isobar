@@ -23,6 +23,7 @@ const $ = (id) => document.getElementById(id);
 const media = window.matchMedia('(prefers-color-scheme: light)');
 const inited = { radar: false, outlooks: false };
 let version = '';
+let platform = 'desktop';
 let loadedAt = 0;
 let loadSeq = 0;
 let keyNudged = false;
@@ -33,6 +34,11 @@ function applyTheme() {
   const pref = state.settings.theme;
   const theme = pref === 'system' ? (media.matches ? 'light' : 'dark') : pref;
   document.documentElement.dataset.theme = theme;
+  // In the Android app, tint the status and navigation bar areas to match.
+  if (window.IsobarAndroid && window.IsobarAndroid.setTheme) {
+    const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+    try { window.IsobarAndroid.setTheme(bg, theme === 'light'); } catch { /* bridge missing */ }
+  }
 }
 
 media.addEventListener('change', () => {
@@ -384,10 +390,12 @@ function renderSettings() {
     el('h3', {}, 'Radar'),
     select('Loop length', 'radar_loop_minutes', [[30, '30 minutes'], [60, '1 hour'], [90, '90 minutes'], [120, '2 hours'], [180, '3 hours']], true),
     select('Loop speed', 'radar_speed_ms', [[700, 'Slow'], [450, 'Normal'], [250, 'Fast']], true),
-    el('h3', {}, 'Alerts'),
-    seg('Notify me', 'notify', [['off', 'Off'], ['warnings', 'Warnings'], ['all', 'All alerts']]),
-    el('p', { class: 'muted small' }, 'Desktop notifications for your current place, checked every 2 minutes while Isobar runs.'),
-    tray,
+    ...(platform === 'android' ? [] : [
+      el('h3', {}, 'Alerts'),
+      seg('Notify me', 'notify', [['off', 'Off'], ['warnings', 'Warnings'], ['all', 'All alerts']]),
+      el('p', { class: 'muted small' }, 'Desktop notifications for your current place, checked every 2 minutes while Isobar runs.'),
+      tray,
+    ]),
     el('h3', {}, 'Saved places'),
     savedBox,
     el('h3', {}, 'About'),
@@ -432,7 +440,12 @@ async function boot() {
     document.body.textContent = `Isobar could not start: ${err.message}`;
     return;
   }
-  try { version = (await api('/api/version')).version; } catch { version = ''; }
+  try {
+    const v = await api('/api/version');
+    version = v.version;
+    platform = v.platform || 'desktop';
+  } catch { version = ''; }
+  document.documentElement.dataset.platform = platform;
 
   applyTheme();
   buildRail();
@@ -445,7 +458,17 @@ async function boot() {
   $('search-ic').innerHTML = uiIcon('search', 18);
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('settings').hidden) closeSettings(); });
 
-  window.isobar = { go };
+  window.isobar = {
+    go,
+    back() {
+      if (!$('settings').hidden) { closeSettings(); return true; }
+      if (!$('results').hidden) { $('results').hidden = true; $('search').blur(); return true; }
+      const open = document.querySelector('.collapsible.open');
+      if (open) { open.classList.remove('open'); return true; }
+      if (state.view !== 'now') { go('now'); return true; }
+      return false;
+    },
+  };
 
   // Tile cache (web/sw.js). If it fails to register, maps still work, they just
   // lean on the regular browser cache.

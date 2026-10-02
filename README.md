@@ -1,6 +1,6 @@
 # Isobar
 
-Isobar is a desktop weather and radar app for people who want the forecast, live radar, warnings and SPC outlooks in one clean window, without paying for RadarOmega or digging through the NWS website.
+Isobar is a weather and radar app for Linux, Windows, macOS and Android, for people who want the forecast, live radar, warnings and SPC outlooks in one clean window, without paying for RadarOmega or digging through the NWS website.
 
 Type in a city, ZIP code or `lat, lon` and you get current conditions, an hourly chart, a 10-day forecast, active alerts, the local forecast discussion, a radar map and the Storm Prediction Center outlooks for days 1 through 8.
 
@@ -61,6 +61,23 @@ The build isn't code signed, so SmartScreen will warn you the first time. Click 
 4. Open it from Launchpad or Applications.
 
 Intel Macs aren't built by the workflow. Run it from source instead (below).
+
+### Android
+
+Android 7.0 or newer, on a 64-bit phone or tablet (anything from about 2017 on).
+
+1. On the phone, open the [Releases](https://github.com/NullAngst/Isobar/releases) page and download `Isobar-<version>-android.apk`.
+2. Open the downloaded file.
+3. If Android asks, allow your browser (or whichever app opened it) to install unknown apps, then go back and tap Install.
+
+Play Protect may warn that it doesn't recognize the developer, since the app isn't from the Play Store. "Install anyway" is under "More details". Updates install over the top the same way, and your settings stay.
+
+What's different on Android:
+
+- The whole UI is the same, laid out for a phone: the view buttons move to a bottom bar, and the radar and outlook panels fold up into one button until you tap them.
+- There are no alert notifications. On the desktop they come from the tray icon, and Android needs a separate background service for that, which this build doesn't have yet. Keep WEA alerts turned on in your phone's settings.
+- The back button closes whatever is open (Settings, search, a map panel), then goes back to Now, then leaves the app.
+- Everything is stored inside the app's private storage, and uninstalling removes it all, settings included.
 
 ## Set up the map key
 
@@ -125,22 +142,57 @@ Settings (units, theme, saved places, radar choices) live in one JSON file. The 
 - Linux: `~/.config/isobar/settings.json` and `~/.cache/isobar/`
 - Windows: `%APPDATA%\Isobar\settings.json` and `%LOCALAPPDATA%\Isobar\Cache\`
 - macOS: `~/Library/Application Support/Isobar/settings.json` and `~/Library/Caches/Isobar/`
+- Android: inside the app's private storage. Clearing the app's storage in Android settings resets it.
 
 ## Building releases
 
-The workflow in `.github/workflows/build.yml` builds Linux, Windows and macOS on GitHub's runners with PyInstaller, then attaches the archives to the release. I do this from the GitHub web UI, so that's what these steps use.
+The workflow in `.github/workflows/build.yml` builds Linux, Windows and macOS on GitHub's runners with PyInstaller, builds and signs the Android APK with Gradle, then attaches all of it to the release. I do this from the GitHub web UI, so that's what these steps use.
 
-1. Bump the version in `isobar/__init__.py` and `CFBundleShortVersionString` in `isobar.spec`, since both show up in the app.
+The Android build needs a signing key in the repo's secrets first. That's a one-time setup, covered in the next section. Until it's done, the Android job fails with a message pointing there, and the desktop builds still go through.
+
+1. Bump the version in `isobar/__init__.py` and `CFBundleShortVersionString` in `isobar.spec`, since both show up in the app. The Android version is read from `__init__.py` automatically.
 2. Commit and push, or upload the changed files through the web UI.
 3. Go to Releases, then "Draft a new release".
 4. Make a new tag like `v1.0.1` and give the release a title.
 5. Click "Publish release".
-6. Wait. All three builds run in parallel and take roughly 10 to 15 minutes. Progress is on the Actions tab.
-7. Refresh the release page. The `.tar.gz` and two `.zip` files are attached.
+6. Wait. All four builds run in parallel and take roughly 10 to 15 minutes. Progress is on the Actions tab.
+7. Refresh the release page. The `.tar.gz`, two `.zip` files and the `.apk` are attached.
 
 For a test build without making a release, go to Actions, pick "Build and release", and click "Run workflow". The archives show up as artifacts at the bottom of that run's page.
 
 If you upload the repo through the web UI and the `.github` folder doesn't come along (some file pickers hide dot folders), use "Add file", then "Create new file", type `.github/workflows/build.yml` as the name, and paste the file in.
+
+## Signing the Android app
+
+Android only installs signed APKs, and it only installs an update if it's signed with the same key as the version already on the phone. So you make one key, keep it forever, and hand it to GitHub as secrets.
+
+BACK UP THE KEYSTORE FILE AND ITS PASSWORD SOMEWHERE SAFE. If you lose either one, you can never publish an update that installs over the existing app. Everyone, you included, would have to uninstall and lose their settings to move to a build signed with a new key.
+
+Prerequisites: `keytool`, which comes with any Java JDK. I use openSUSE, so in my case that's `sudo zypper install java-21-openjdk-headless`. On other systems install whichever OpenJDK package your package manager has.
+
+1. Make the key: `keytool -genkeypair -v -keystore isobar-release.jks -alias isobar -keyalg RSA -keysize 4096 -validity 10000`
+2. Answer the prompts. Pick a strong password. The name and organization questions can be anything, since they only show up in the certificate.
+3. Turn the keystore into text GitHub can store: `base64 -w0 isobar-release.jks > isobar-release.jks.b64`
+4. In the repo on GitHub, go to Settings, then "Secrets and variables", then Actions.
+5. Click "New repository secret" and add these four:
+   - `ANDROID_KEYSTORE_BASE64`: the entire contents of `isobar-release.jks.b64`
+   - `ANDROID_KEYSTORE_PASSWORD`: the password you picked
+   - `ANDROID_KEY_ALIAS`: `isobar`
+   - `ANDROID_KEY_PASSWORD`: the same password again, since keytool's default keystore type uses one password for both
+6. Delete `isobar-release.jks.b64`, since it's the key in plain text: `rm isobar-release.jks.b64`
+7. Move `isobar-release.jks` into your backups. Don't put it in the repo. The `.gitignore` blocks `*.jks` files, but the web UI upload doesn't read `.gitignore`, so be careful what you drag in.
+
+The workflow decodes the key onto the runner, signs the APK, checks the signature with `apksigner`, and deletes the key file when the job ends.
+
+### Building the APK yourself
+
+You'll need the Android SDK (Android Studio installs it), JDK 17 and Python 3.12 on your PATH, since Chaquopy compiles the Python side with a matching Python.
+
+1. Go into the Android project: `cd android`
+2. Build a debug APK, signed with Android's throwaway debug key: `./gradlew assembleDebug`
+3. Install it on a phone with USB debugging on: `adb install -r app/build/outputs/apk/debug/app-debug.apk`
+
+A debug build and a release build have different signatures, so one won't install over the other. Uninstall first when you switch.
 
 ## Where the data comes from, and the limits
 
@@ -153,6 +205,7 @@ If you upload the repo through the web UI and the `.github` folder doesn't come 
 
 Things you should know before relying on it:
 
+- The Android app is a thin shell: Python runs inside it through [Chaquopy](https://chaquo.com/chaquopy/) and serves the same UI to a WebView. That makes it bigger than a native app would be (Python itself is in there), and the first launch after an install or update takes a few seconds while it unpacks.
 - Outside the US you get the forecast and the model maps. Radar, alerts, outlooks and discussions are blank.
 - The custom color modes only apply to reflectivity. Velocity, rotation, echo tops, rainfall, future radar and satellite use the source colors and the legend shows them.
 - The Wind and Temperature maps are model output from Open-Meteo, not station observations. They can be off by a few degrees or a few mph, and they don't show storm-scale gusts.

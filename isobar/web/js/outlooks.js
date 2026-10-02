@@ -161,7 +161,18 @@ function renderTabs() {
   ui.kinds.hidden = kindsFor(day).length < 2;
 }
 
+function headLabel() {
+  if (!ui.headText) return;
+  const name = day === 1 ? 'Today' : dayShort(dayDate(day));
+  const info = state.spc && state.spc[day - 1];
+  const cat = info && info.category;
+  ui.headText.textContent = cat
+    ? `${name}: ${cat.level === 0 ? 'thunderstorms' : `${cat.name.toLowerCase()} risk`}`
+    : `${name}: SPC outlook`;
+}
+
 function renderSummary() {
+  headLabel();
   const box = ui.summary;
   box.replaceChildren();
   if (!state.loc) {
@@ -206,6 +217,9 @@ function spcLink() {
   return 'https://www.spc.noaa.gov/products/exper/day4-8/';
 }
 
+// Zoom that fits the lower 48 in the current window.
+const usZoom = () => (window.innerWidth < 640 ? 3 : 4);
+
 export function initOutlooks(container) {
   root = container;
   const mapEl = el('div', { class: 'radar-map' });
@@ -215,7 +229,13 @@ export function initOutlooks(container) {
   ui.summary = el('div', { class: 'sum' });
   ui.legend = el('div', { class: 'float legend legend-keys' });
 
-  const panel = el('div', { class: 'float panel-products panel-outlook' },
+  ui.headText = el('span', {}, 'SPC outlooks');
+  const head = el('button', {
+    class: 'panel-head', 'aria-expanded': 'false',
+    onclick: () => head.setAttribute('aria-expanded', String(panel.classList.toggle('open'))),
+  }, ui.headText, el('span', { class: 'panel-chev', html: uiIcon('chevron', 16) }));
+  const panel = el('div', { class: 'float panel-products panel-outlook collapsible' },
+    head,
     el('h2', { class: 'panel-title' }, 'SPC outlooks'),
     ui.days, ui.kinds, ui.status, ui.summary,
     el('button', { class: 'link', onclick: () => openExternal(spcLink()) },
@@ -223,12 +243,12 @@ export function initOutlooks(container) {
   const homeBtn = el('button', {
     class: 'float icon-btn btn-home', 'aria-label': 'Show the whole country', title: 'Show the whole country',
     html: uiIcon('locate', 20),
-    onclick: () => map.setView([38.5, -96], 4),
+    onclick: () => map.setView([38.5, -96], usZoom()),
   });
 
   root.append(mapEl, panel, homeBtn, ui.legend);
   map = createMap(mapEl, { maxZoom: 9 });
-  map.setView([38.5, -96], 4);
+  map.setView([38.5, -96], usZoom());
   setBorders(map, false);
   if (state.loc) marker = locationMarker([state.loc.lat, state.loc.lon]).addTo(map);
 
