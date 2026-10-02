@@ -95,16 +95,24 @@ pre { font: 12.5px/1.5 ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospac
 
 #app { display: grid; grid-template-columns: 72px 1fr; height: 100vh; }
 
+/* The rail scrolls when it doesn't fit (a phone on its side, a short window).
+   --corner-x/--corner-y come from the Android app and keep the last button
+   clear of a rounded screen corner. */
 .rail {
   display: flex; flex-direction: column; align-items: stretch;
   border-right: 1px solid var(--line);
-  padding: 10px 0;
+  padding: 10px 0 calc(10px + var(--corner-y, 0px) + var(--corner-x, 0px));
   background: var(--bg);
   min-height: 0;
+  overflow-y: auto; overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
 }
+.rail::-webkit-scrollbar { display: none; }
+.rail > * { flex-shrink: 0; }
 .rail-logo { display: flex; justify-content: center; padding: 4px 0 14px; }
 .rail-logo img { border-radius: 8px; }
-.rail-views { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+.rail-views { display: flex; flex-direction: column; gap: 2px; flex: 1 0 auto; }
 .rail-btn {
   position: relative;
   display: flex; flex-direction: column; align-items: center; gap: 3px;
@@ -508,6 +516,24 @@ input[type="range"] { accent-color: var(--accent); }
   .panel-products { width: 200px; }
   .timeline { width: calc(100% - 24px); min-width: 0; bottom: 64px; }
   .legend { display: none; }
+}
+
+/* ------------------------------------------------------------------ short screens */
+
+/* Landscape phones and short windows: tighten the rail so it fits, and drop
+   the labels when even that isn't enough. The buttons keep their names for
+   screen readers and as tooltips. */
+@media (min-width: 641px) and (max-height: 600px) {
+  .rail { padding-top: 6px; }
+  .rail-logo { display: none; }
+  .rail-btn { padding: 5px 0 4px; gap: 1px; }
+  .rail-label { font-size: 10px; }
+  .top { height: 48px; }
+}
+@media (min-width: 641px) and (max-height: 440px) {
+  .rail-btn { padding: 9px 0; }
+  .rail-label { display: none; }
+  .badge { top: 2px; right: 8px; }
 }
 
 /* ------------------------------------------------------------------ phones (and the Android app) */

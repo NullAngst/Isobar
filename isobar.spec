@@ -94,7 +94,7 @@ if sys.platform == "darwin":
         info_plist={
             "CFBundleName": "Isobar",
             "CFBundleDisplayName": "Isobar",
-            "CFBundleShortVersionString": "1.3.0",
+            "CFBundleShortVersionString": "1.3.1",
             "NSHighResolutionCapable": True,
             "LSApplicationCategoryType": "public.app-category.weather",
         },

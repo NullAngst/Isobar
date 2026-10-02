@@ -54,7 +54,7 @@ function buildRail() {
   const top = $('rail-views');
   for (const v of VIEWS) {
     top.append(el('button', {
-      class: 'rail-btn', dataset: { view: v.id }, 'aria-label': v.name,
+      class: 'rail-btn', dataset: { view: v.id }, 'aria-label': v.name, title: v.name,
       onclick: () => go(v.id),
     }, el('span', { class: 'rail-ic', html: uiIcon(v.icon, 22) }), el('span', { class: 'rail-label' }, v.name),
     v.id === 'alerts' ? el('span', { class: 'badge', id: 'alert-badge', hidden: true }) : null));
