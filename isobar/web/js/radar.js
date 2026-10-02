@@ -6,7 +6,7 @@
 // Reflectivity tiles are decoded back to dBZ in the browser and repainted
 // with the selected palette and clutter cutoff.
 
-import { state, api, IEM, proxyUrl, on, saveSettings, toast, el, debounce } from './core.js';
+import { state, api, IEM, proxyUrl, on, saveSettings, toast, el, debounce, esc } from './core.js';
 import { createMap, applyBasemap, setBorders, locationMarker, BASEMAPS } from './basemap.js';
 import { PALETTES, paletteLUT, colorIndex, dbzToIndex } from './ramps.js';
 import { hazardColor, hazardName, instant, ago, tempRGB, windRGB, tempVal, windVal, windUnit, SPC_COLORS } from './util.js';
@@ -373,9 +373,9 @@ function renderSitesLayer() {
     });
     const label = x.icao || x.id;
     if (on) {
-      mk.bindTooltip(label, { permanent: true, direction: 'right', offset: [8, 0], className: 'site-label' });
+      mk.bindTooltip(esc(label), { permanent: true, direction: 'right', offset: [8, 0], className: 'site-label' });
     } else {
-      mk.bindTooltip(`${label}${x.name ? ` ${x.name}` : ''}`, { direction: 'top', offset: [0, -6] });
+      mk.bindTooltip(esc(`${label}${x.name ? ` ${x.name}` : ''}`), { direction: 'top', offset: [0, -6] });
     }
     mk.on('click', () => {
       if (on) {
@@ -593,17 +593,32 @@ function updateLoading() {
 
 // ------------------------------------------------------------------ fields
 
+// The last model grid fetched. The server pads the area it asks Open-Meteo for,
+// so as long as the view stays inside it at a similar zoom, pans and small
+// zooms reuse it instead of costing another batch of Open-Meteo calls.
+let lastGrid = null;
+
+function gridCovers(grid, bounds, zoom) {
+  if (!grid || Math.abs(grid.zoom - zoom) > 1 || Date.now() - grid.at > 30 * 60 * 1000) return false;
+  const { lats, lons } = grid.data;
+  if (!lats || !lons || lats.length < 2 || lons.length < 2) return false;
+  return bounds.getSouth() >= lats[0] && bounds.getNorth() <= lats[lats.length - 1]
+    && bounds.getWest() >= lons[0] && bounds.getEast() <= lons[lons.length - 1];
+}
+
 async function ensureField() {
   const p = product();
   if (!fieldLayer) fieldLayer = new FieldLayer().addTo(map);
-  const b = map.getBounds().pad(0.15);
+  const b = map.getBounds();
+  const zoom = map.getZoom();
   const size = map.getSize();
-  const nx = Math.max(5, Math.min(10, Math.round(size.x / 140)));
-  const ny = Math.max(4, Math.min(8, Math.round(size.y / 140)));
+  const nx = Math.max(5, Math.min(9, Math.round(size.x / 140)));
+  const ny = Math.max(4, Math.min(7, Math.round(size.y / 140)));
   try {
-    const grid = await api('/api/grid', {
+    const grid = gridCovers(lastGrid, b, zoom) ? lastGrid.data : await api('/api/grid', {
       s: b.getSouth().toFixed(2), w: b.getWest().toFixed(2), n: b.getNorth().toFixed(2), e: b.getEast().toFixed(2), nx, ny,
     });
+    if (!lastGrid || lastGrid.data !== grid) lastGrid = { data: grid, zoom, at: Date.now() };
     if (product().field === p.field && fieldLayer) {
       fieldLayer.setData(grid, p.field);
       if (ui.label) ui.label.textContent = grid.time ? `Model time ${instant(`${grid.time}Z`)}` : 'Current model analysis';
@@ -667,9 +682,10 @@ function wwaStyle(p) {
 
 function wwaPopup(p) {
   const name = hazardName(p.phenom, p.sig, p.event);
-  const lines = [`<strong style="--c:${hazardColor(p.phenom, p.sig)}" class="pop-title">${name}</strong>`];
-  if (p.expires) lines.push(`<span>Until ${instant(p.expires, true)}</span>`);
-  if (p.wfo) lines.push(`<span>NWS ${String(p.wfo).replace(/^K/, '')}</span>`);
+  // Leaflet popups take HTML, so everything that came from NOAA is escaped.
+  const lines = [`<strong style="--c:${esc(hazardColor(p.phenom, p.sig))}" class="pop-title">${esc(name)}</strong>`];
+  if (p.expires) lines.push(`<span>Until ${esc(instant(p.expires, true))}</span>`);
+  if (p.wfo) lines.push(`<span>NWS ${esc(String(p.wfo).replace(/^K/, ''))}</span>`);
   return `<div class="pop">${lines.join('')}</div>`;
 }
 
@@ -936,7 +952,7 @@ export function initRadar(container) {
 
   setInterval(() => {
     if (state.view !== 'radar' || document.hidden) return;
-    if (Date.now() - lastBuild > 120000 && !product().field) rebuild({ keepIndex: !playing });
+    if (Date.now() - lastBuild > refreshAfter() && !product().field) rebuild({ keepIndex: !playing });
     refreshWWA();
   }, 60000);
 
@@ -944,11 +960,25 @@ export function initRadar(container) {
   loadSites();
 }
 
+// How often a product's frames are rebuilt while it's on screen. Timestamped
+// frames only add the newest scan, so checking every two minutes is cheap.
+// The echo tops loop is twelve "N minutes ago" layers whose pictures all
+// shift together, so every rebuild re-downloads the whole loop; that one
+// refreshes every ten minutes. Model runs and satellite change more slowly.
+function refreshAfter() {
+  const p = product();
+  const site = activeSite();
+  if (p.id === 'tops' && site === 'mosaic') return 10 * 60000;
+  if (p.id === 'future') return 30 * 60000;
+  if (p.id === 'rain' || p.id === 'sat') return 5 * 60000;
+  return 2 * 60000;
+}
+
 export function showRadar() {
   if (!map) return;
   setTimeout(() => {
     map.invalidateSize();
-    if (!built || Date.now() - lastBuild > 120000) rebuild({ keepIndex: true });
+    if (!built || Date.now() - lastBuild > refreshAfter()) rebuild({ keepIndex: true });
     refreshWWA();
     refreshOutlook();
   }, 30);

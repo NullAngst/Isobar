@@ -116,7 +116,7 @@ If Qt WebEngine won't install or won't start on your machine, `python run.py --b
 | `--port N` | Use a different local port (default 47130, or a random one if that's taken) |
 | `--no-sandbox` | Turn off Chromium's sandbox, for setups that block it |
 | `--software-gl` | Render without the GPU, for VMs and broken drivers |
-| `--debug` | Verbose logs, plus a web inspector on port 9222 |
+| `--debug` | Verbose logs, plus a web inspector on port 9222. Anything running on your machine can attach to that inspector while it's open, so use it for troubleshooting only. |
 | `--version` | Print the version and exit |
 
 ## The map cache
@@ -130,14 +130,43 @@ How long a tile stays good depends on what it is:
 | Radar mosaic and single-radar scans | 24 hours | Each frame is one timestamped scan, which never changes. New scans have new addresses, so the loop picks them up on its own. |
 | County lines | 30 days | They don't move. |
 | Base maps (CARTO, Esri) | 7 days | Roads and labels change slowly. |
-| Future radar (HRRR) | 20 minutes | A new model run lands every hour. |
-| Echo tops, rainfall, satellite | 4 minutes | These addresses always mean "the latest", so the picture behind them changes. |
+| Future radar (HRRR) | 30 minutes | A new model run lands about every hour. |
+| Echo tops loop | 10 minutes | Its frames are "N minutes ago" layers that all change together, so the loop only rebuilds every 10 minutes. |
+| Rainfall, satellite | 4 minutes | These addresses always mean "the latest", so the picture behind them changes. |
 
 If the network drops, Isobar shows an expired tile rather than a blank one.
 
 The cache tops out around 6,000 tiles and drops the oldest past that. Settings, under Maps, shows how big it is and has a Clear button.
 
 The cache is tied to the app's local address, which is why Isobar now always uses port 47130. If something else already has that port, Isobar picks a random one and the cache starts empty for that run. Same thing if you pass a different `--port`.
+
+## Going easy on the free services
+
+Everything Isobar shows comes from services that are free because the people running them are generous. The app is built to ask them for as little as possible:
+
+- **Every request identifies itself** as Isobar, with a link to this repo, which the NWS and OpenStreetMap ask for.
+- **Every answer is cached** for as long as it can stay useful: forecasts 10 minutes, alerts 1 minute, SPC outlooks 10 minutes, NWS text forecasts 30 minutes, forecast discussions a day once issued, search results and NWS grid points a day, place names for typed coordinates 30 days.
+- **Long-lived answers are kept on disk**, so a restart doesn't refetch them.
+- **Expired answers are revalidated, not refetched.** If a server sent an ETag or Last-Modified date, Isobar asks "has this changed?" and an unchanged answer comes back as a tiny "not modified".
+- **Identical requests share one call.** If five parts of the app want the same thing at once, the server gets asked once, and that holds when the call fails too.
+- **Failing services get left alone.** After an error, timeout or "slow down" from a host, Isobar backs off that host, honoring any Retry-After it sends, starting at 20 seconds and doubling up to 15 minutes. While it waits, you see the last good answer if there is one.
+- **Nothing refreshes while you aren't looking.** The forecast refreshes every 10 minutes and alerts every 2, and only while the window is visible. Desktop notifications check alerts every 2 minutes.
+- **Map requests are shaped to reuse answers.** Watch and warning boxes snap to a coarse grid, so panning around lands on the same few areas. The wind and temperature maps ask for a padded area and reuse it while you pan inside it.
+- **Typed coordinates aren't looked up per keystroke.** The place name for "34.58, -83.33" is fetched once, when you pick it, and those lookups are spaced at least a second apart per OpenStreetMap Nominatim's usage policy.
+
+## Security
+
+Isobar runs a small web server on your machine to show its UI, so it's locked down:
+
+- **It only listens on 127.0.0.1**, so nothing else on your network can reach it.
+- **Every API call needs a random token** made fresh each launch. It moves out of the address bar as soon as the page loads.
+- **Requests from other websites are refused.** The server checks the Host header, which stops DNS rebinding, and turns away any request whose Origin isn't Isobar itself.
+- **A strict Content-Security-Policy** limits the page to its own scripts. The only outside hosts it may load from are the radar and map tile servers. Text from weather services is always escaped before display.
+- **Tile servers are sent no Referer header**, so they don't learn the local address or the token.
+- **Links only ever open in your browser, and only web links** (http and https). Anything else, like a file path or a custom protocol, is dropped.
+- **The tile proxy fallback only fetches images from the Iowa Environmental Mesonet.** It refuses redirects and caps response sizes.
+- **Settings are validated before they're saved**, and the settings file is readable only by you, since it can hold your CARTO key.
+- **The GitHub workflow builds with read-only access.** Only the final release step can write, and every action is pinned to an exact commit.
 
 ## Where it keeps things
 

@@ -1,6 +1,22 @@
 // Shared state, API access and a tiny event bus.
 
-const TOKEN = new URLSearchParams(location.search).get('t') || '';
+// The session token arrives in the URL the app opens. It's moved into
+// sessionStorage and taken out of the address bar right away, so it doesn't
+// sit in browser history (in --browser mode) and survives a page reload.
+const TOKEN = (() => {
+  const params = new URLSearchParams(location.search);
+  let token = params.get('t');
+  try {
+    if (token) sessionStorage.setItem('isobar-token', token);
+    else token = sessionStorage.getItem('isobar-token');
+  } catch { /* storage blocked: keep the URL token for this load */ }
+  if (params.has('t')) {
+    params.delete('t');
+    const rest = params.toString();
+    history.replaceState(null, '', `${location.pathname}${rest ? `?${rest}` : ''}${location.hash}`);
+  }
+  return token || '';
+})();
 
 export const IEM = 'https://mesonet.agron.iastate.edu';
 

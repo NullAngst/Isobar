@@ -230,6 +230,7 @@ function savedList() {
 
 const search = debounce(async (q) => {
   if (!q.trim()) { showResults(savedList(), state.settings.saved.length ? 'Saved places' : ''); return; }
+  if (q.trim().length < 2) return;
   try {
     const res = await api('/api/geocode', { q });
     if ($('search').value !== q) return;
@@ -239,14 +240,21 @@ const search = debounce(async (q) => {
     showResults([], `Search failed: ${err.message}`);
     $('results').hidden = false;
   }
-}, 300);
+}, 400);
 
-function pick(i) {
+async function pick(i) {
   const r = results[i];
   if (!r) return;
   $('search').value = '';
   $('results').hidden = true;
   $('search').blur();
+  if (r.reverse) {
+    // Typed coordinates get a place name once, when picked, not per keystroke.
+    try {
+      const res = await api('/api/reverse', { lat: r.lat, lon: r.lon });
+      if (res && res.name) r.name = res.name;
+    } catch { /* keep the coordinates as the name */ }
+  }
   setLocation(r);
 }
 

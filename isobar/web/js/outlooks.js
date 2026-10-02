@@ -1,6 +1,6 @@
 // SPC convective outlooks, days 1 to 8, on their own map.
 
-import { state, api, on, el, openExternal, toast } from './core.js';
+import { state, api, on, el, openExternal, toast, esc } from './core.js';
 import { createMap, applyBasemap, setBorders, locationMarker } from './basemap.js';
 import { wallNow, dayShort, dateShort, instant, SPC_COLORS } from './util.js';
 import { uiIcon } from './icons.js';
@@ -56,8 +56,11 @@ function labelText(label) {
   return label;
 }
 
+// Colors from the SPC files end up in style attributes, so only plain hex passes.
+const HEX = /^#[0-9a-f]{3,8}$/i;
+
 function colorFor(props, k) {
-  if (props.fill) return props.fill;
+  if (props.fill && HEX.test(props.fill)) return props.fill;
   const up = props.label.toUpperCase();
   if (SPC_COLORS[up]) return SPC_COLORS[up];
   const table = day >= 4 || k === 'prob' ? PROB_COLORS.ext : k === 'torn' ? PROB_COLORS.torn : PROB_COLORS.other;
@@ -93,9 +96,9 @@ async function draw() {
     pane: 'outlook',
     style: (f) => {
       const color = colorFor(f.properties, k);
-      return { color: f.properties.stroke || color, weight: 1.4, opacity: 0.95, fillColor: color, fillOpacity: 0.42 };
+      return { color: HEX.test(f.properties.stroke || '') ? f.properties.stroke : color, weight: 1.4, opacity: 0.95, fillColor: color, fillOpacity: 0.42 };
     },
-    onEachFeature: (f, lyr) => lyr.bindTooltip(labelText(f.properties.label), { sticky: true, className: 'iso-tip' }),
+    onEachFeature: (f, lyr) => lyr.bindTooltip(esc(labelText(f.properties.label)), { sticky: true, className: 'iso-tip' }),
   }).addTo(map);
 
   hatch = o.intensity && o.intensity.length

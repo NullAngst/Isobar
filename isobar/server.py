@@ -1,12 +1,17 @@
 """Local HTTP server: serves the web UI and a small JSON API.
 
-Bound to 127.0.0.1 on a random port. API calls need the per-session token,
-and the Host header must be the loopback address, which stops other sites
-in a browser from poking at it through DNS rebinding.
+Bound to 127.0.0.1 only (port 47130 when free). Every API call needs the
+per-session token in the X-Isobar-Token header; only the tile proxy takes it
+as a query parameter, since an image tag can't send headers. The Host header
+must be the loopback address, which defeats DNS rebinding, and requests that
+carry an Origin header must come from this server's own origin. Every
+response carries a Content-Security-Policy that limits the page to its own
+scripts and the four map and radar hosts.
 """
 
 import json
 import logging
+import re
 import mimetypes
 import os
 import secrets
@@ -28,6 +33,31 @@ TILE_HOSTS = {
     "mesonet2.agron.iastate.edu",
     "mesonet3.agron.iastate.edu",
 }
+
+MAP_HOSTS = "https://*.agron.iastate.edu https://*.basemaps.cartocdn.com https://server.arcgisonline.com"
+CSP = "; ".join([
+    "default-src 'self'",
+    "script-src 'self'",
+    # Leaflet positions everything with inline style attributes.
+    "style-src 'self' 'unsafe-inline'",
+    f"img-src 'self' data: blob: {MAP_HOSTS}",
+    f"connect-src 'self' {MAP_HOSTS}",
+    "font-src 'self'",
+    "worker-src 'self'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'none'",
+    "frame-ancestors 'none'",
+])
+SECURITY_HEADERS = {
+    "Content-Security-Policy": CSP,
+    "X-Content-Type-Options": "nosniff",
+    # Tile servers get no Referer at all, so neither the local address nor the token leaks.
+    "Referrer-Policy": "no-referrer",
+    "X-Frame-Options": "DENY",
+    "Cross-Origin-Opener-Policy": "same-origin",
+}
+TOKEN_IN_URL = re.compile(r"([?&]t=)[^&\s]+")
 
 mimetypes.add_type("application/javascript", ".js")
 mimetypes.add_type("text/css", ".css")
@@ -57,14 +87,13 @@ class Handler(BaseHTTPRequestHandler):
     # ------------------------------------------------------------ plumbing
 
     def log_message(self, fmt, *args):
-        log.debug("%s %s", self.address_string(), fmt % args)
+        log.debug("%s %s", self.address_string(), TOKEN_IN_URL.sub(r"\1***", fmt % args))
 
     def _send(self, status, body, ctype, extra=None):
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("X-Content-Type-Options", "nosniff")
-        for key, value in (extra or {}).items():
+        for key, value in {**SECURITY_HEADERS, **(extra or {})}.items():
             self.send_header(key, value)
         self.end_headers()
         if self.command != "HEAD":
@@ -81,16 +110,33 @@ class Handler(BaseHTTPRequestHandler):
         host = (self.headers.get("Host") or "").split(":")[0]
         return host in ("127.0.0.1", "localhost")
 
-    def _token_ok(self, qs):
-        token = self.headers.get("X-Isobar-Token") or _str(qs, "t")
+    def _token_ok(self, qs, allow_query=False):
+        token = self.headers.get("X-Isobar-Token")
+        if token is None and allow_query:
+            token = _str(qs, "t")
         return token is not None and secrets.compare_digest(token, self.server.token)
 
+    def _origin_ok(self):
+        # Browsers send Origin on cross-site and on all POST requests. Anything
+        # that isn't this server is turned away, token or not.
+        origin = self.headers.get("Origin")
+        if origin is None:
+            return True
+        port = self.server.server_address[1]
+        return origin in (f"http://127.0.0.1:{port}", f"http://localhost:{port}")
+
     def _body_json(self):
-        length = int(self.headers.get("Content-Length") or 0)
-        if length > 1_000_000:
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError as exc:
+            raise ValueError("bad Content-Length") from exc
+        if length < 0 or length > 256_000:
             raise ValueError("body too large")
         raw = self.rfile.read(length) if length else b"{}"
-        return json.loads(raw or b"{}")
+        try:
+            return json.loads(raw or b"{}")
+        except ValueError as exc:
+            raise ValueError("body is not JSON") from exc
 
     # ------------------------------------------------------------ routing
 
@@ -115,7 +161,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._error(405, "method not allowed")
             return self._static(path)
 
-        if not self._token_ok(qs):
+        if not self._origin_ok():
+            return self._error(403, "bad origin")
+        if not self._token_ok(qs, allow_query=path.startswith("/proxy/")):
             return self._error(401, "bad token")
 
         route = self.ROUTES.get((method, path))
@@ -130,9 +178,9 @@ class Handler(BaseHTTPRequestHandler):
             self._error(502, str(exc))
         except BrokenPipeError:
             pass
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             log.exception("handler crashed")
-            self._error(500, f"{exc.__class__.__name__}: {exc}")
+            self._error(500, "internal error, see the log")
 
     def _static(self, path):
         root = web_dir().resolve()
@@ -211,15 +259,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def api_open(self, qs):
         url = str(self._body_json().get("url") or "")
-        if not url.startswith(("https://", "http://")):
-            raise ValueError("only http(s) links can be opened")
+        parsed = urlparse(url)
+        if parsed.scheme not in ("https", "http") or not parsed.hostname or len(url) > 2048 or any(c in url for c in "\r\n\t "):
+            raise ValueError("only plain http(s) links can be opened")
         threading.Thread(target=self.server.open_url, args=(url,), daemon=True).start()
         self._json({"ok": True})
 
     def proxy_tile(self, qs):
         target = _str(qs, "u", "")
         parsed = urlparse(target)
-        if parsed.scheme != "https" or parsed.hostname not in TILE_HOSTS:
+        if (len(target) > 1024 or parsed.scheme != "https" or parsed.hostname not in TILE_HOSTS
+                or parsed.port not in (None, 443) or parsed.username or parsed.password):
             raise ValueError("tile host not allowed")
         body, ctype = get_bytes(target, ttl=120 if "-0/" in target or "/cache/" in target else 3600)
         self._send(200, body, ctype, {"Cache-Control": "max-age=60", "Access-Control-Allow-Origin": "*"})

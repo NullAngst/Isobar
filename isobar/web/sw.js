@@ -10,13 +10,16 @@
 //   county and state lines                30 days
 //   base maps (CARTO, Esri)               7 days
 //   legends                               7 days
-//   HRRR future radar                     20 minutes (new model run every hour)
-//   "latest" products                     4 minutes (echo tops, rainfall, satellite,
+//   HRRR future radar                     30 minutes (a new run lands about hourly)
+//   echo tops loop                        10 minutes (matches how often it rebuilds)
+//   other "latest" products               4 minutes (rainfall, satellite,
 //                                          single-site fallback)
 //
 // If the network is down, an expired tile is still served rather than a blank one.
+// A tile server that says no-store or private is respected: those tiles pass
+// through and aren't kept.
 
-const CACHE = 'isobar-tiles-v1';
+const CACHE = 'isobar-tiles-v1';  // bump to drop every stored tile on the next start
 const MAX_ENTRIES = 6000;
 const TRIM_EVERY = 200;
 const KEEP_EXPIRED = 60 * 60 * 1000; // expired tiles hang around an hour for offline use
@@ -40,7 +43,9 @@ function ttlFor(href) {
       const layer = decodeURIComponent(u.pathname.slice(at + marker.length).split('/')[0]);
       if (/^(uscounties|usstates)/.test(layer)) return 30 * DAY;
       if (/\d{12}$/.test(layer)) return DAY;
-      if (layer.startsWith('hrrr::')) return 20 * MIN;
+      if (layer.startsWith('hrrr::')) return 30 * MIN;
+      // The echo tops loop rebuilds every 10 minutes; matching that keeps one loop consistent.
+      if (layer.startsWith('nexrad-eet')) return 10 * MIN;
       return 4 * MIN;
     }
     if (u.pathname.startsWith('/GIS/legends/') || u.pathname.startsWith('/images/')) return 7 * DAY;
@@ -94,7 +99,8 @@ async function serve(req, ttl) {
   }
   // Opaque responses (no CORS) can't be inspected and Chrome bills each one
   // as megabytes of quota, so those are passed through uncached.
-  if (res.ok && res.type !== 'opaque') {
+  const control = (res.headers.get('Cache-Control') || '').toLowerCase();
+  if (res.ok && res.type !== 'opaque' && !/no-store|private/.test(control)) {
     try {
       const body = await res.clone().blob();
       const headers = new Headers(res.headers);

@@ -52,9 +52,11 @@ def start(files_dir, cache_dir):
         os.environ["ISOBAR_PLATFORM"] = "android"
         logging.basicConfig(level=logging.INFO, format="%(name)s %(levelname)s %(message)s")
 
+        from .net import prune_disk
         from .server import Server
 
         _server = Server.create(open_url=_open_url)
         _server.start()
+        threading.Thread(target=prune_disk, name="isobar-prune", daemon=True).start()
         log.info("serving %s", _server.url)
         return _server.url

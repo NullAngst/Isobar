@@ -15,6 +15,7 @@ import webbrowser
 
 from . import APP_NAME, __version__, settings, sources
 from .paths import cache_dir, icon_path
+from .net import prune_disk
 from .server import Server
 
 log = logging.getLogger("isobar")
@@ -75,20 +76,32 @@ def run_qt(server, args):
     app.setWindowIcon(icon)
 
     local_hosts = ("127.0.0.1", "localhost")
+    local_port = server.server_address[1]
+
+    def open_outside(url):
+        # Only web links leave the app. file:, smb:, custom protocol handlers and
+        # the like are dropped, so a bad link can't launch something on the system.
+        if url.scheme() in ("http", "https"):
+            QDesktopServices.openUrl(url)
+        else:
+            log.info("refused to open %s link", url.scheme())
+
+    def is_ours(url):
+        return url.scheme() == "http" and url.host() in local_hosts and url.port() == local_port
 
     class ExternalPage(QWebEnginePage):
         """Catches target=_blank windows and hands the link to the OS."""
 
         def acceptNavigationRequest(self, url, nav_type, is_main_frame):
-            QDesktopServices.openUrl(url)
+            open_outside(url)
             self.deleteLater()
             return False
 
     class Page(QWebEnginePage):
         def acceptNavigationRequest(self, url, nav_type, is_main_frame):
-            if not is_main_frame or url.host() in local_hosts or url.scheme() in ("data", "blob", "about"):
+            if not is_main_frame or is_ours(url) or url.scheme() in ("data", "blob", "about"):
                 return True
-            QDesktopServices.openUrl(url)
+            open_outside(url)
             return False
 
         def createWindow(self, window_type):
@@ -223,6 +236,7 @@ def main(argv=None):
     )
     server = Server.create(port=args.port)
     server.start()
+    threading.Thread(target=prune_disk, name="isobar-prune", daemon=True).start()
 
     if args.browser:
         run_browser(server)

@@ -1,5 +1,5 @@
 """Isobar: a desktop weather and radar app."""
 
-__version__ = "1.2.1"
+__version__ = "1.3.0"
 APP_NAME = "Isobar"
 REPO_URL = "https://github.com/NullAngst/Isobar"

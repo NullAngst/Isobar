@@ -43,6 +43,9 @@ class MainActivity : AppCompatActivity() {
     private var cornerX = 0f
     private var cornerY = 0f
 
+    // Port of Isobar's own server, once it's running. Only that origin loads in the WebView.
+    private var serverPort = -1
+
     @SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -85,7 +88,8 @@ class MainActivity : AppCompatActivity() {
 
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 // Only Isobar's own pages load in here. Anything else goes to the browser.
-                if (request.url.host == "127.0.0.1") return false
+                val url = request.url
+                if (url.scheme == "http" && url.host == "127.0.0.1" && url.port == serverPort) return false
                 openExternally(request.url)
                 return true
             }
@@ -130,6 +134,7 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
                 if (isDestroyed) return@runOnUiThread
                 if (url != null) {
+                    serverPort = Uri.parse(url).port
                     web.loadUrl(url)
                 } else {
                     web.loadDataWithBaseURL(null, ERROR_PAGE, "text/html", "utf-8", null)
@@ -181,6 +186,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun openExternally(uri: Uri) {
+        // Web links only. Anything else (intent:, file:, content:, custom schemes) is dropped.
+        if (uri.scheme != "https" && uri.scheme != "http") {
+            Log.w(TAG, "refused to open ${uri.scheme} link")
+            return
+        }
         try {
             startActivity(Intent(Intent.ACTION_VIEW, uri))
         } catch (e: ActivityNotFoundException) {

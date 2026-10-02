@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 from . import geo
-from .net import FetchError, get_json
+from .net import FetchError, get_json, polite_wait
 
 OPEN_METEO = "https://api.open-meteo.com/v1/forecast"
 OPEN_METEO_GEO = "https://geocoding-api.open-meteo.com/v1/search"
@@ -36,6 +36,13 @@ def _r(value, places=4):
     return round(float(value), places)
 
 
+def _nws_url(url):
+    """URLs taken out of NWS responses are only followed if they point back at the NWS API."""
+    if isinstance(url, str) and url.startswith(NWS + "/"):
+        return url
+    return None
+
+
 # ---------------------------------------------------------------- locations
 
 def geocode(query):
@@ -46,7 +53,11 @@ def geocode(query):
     if match:
         lat, lon = float(match.group(1)), float(match.group(2))
         if -90 <= lat <= 90 and -180 <= lon <= 180:
-            return [{"name": reverse(lat, lon), "lat": lat, "lon": lon, "detail": "Coordinates"}]
+            # No reverse lookup here: this runs as you type, and Nominatim's policy
+            # rules out lookups per keystroke. The UI names the place once it's picked.
+            return [{"name": f"{lat:.3f}, {lon:.3f}", "lat": lat, "lon": lon, "detail": "Coordinates", "reverse": True}]
+    if len(query) < 2:
+        return []
     params = {"name": query, "count": 8, "language": "en", "format": "json"}
     if re.fullmatch(r"\d{5}", query):
         params["countryCode"] = "US"
@@ -68,10 +79,13 @@ def reverse(lat, lon):
     if point and point.get("city"):
         return f"{point['city']}, {point['state']}"
     try:
+        # Rounded to about 1 km so nearby lookups share a cached answer, and
+        # spaced at least a second apart per Nominatim's usage policy.
         data = get_json(
             NOMINATIM,
-            {"lat": _r(lat), "lon": _r(lon), "format": "jsonv2", "zoom": 10},
-            ttl=86400,
+            {"lat": _r(lat, 2), "lon": _r(lon, 2), "format": "jsonv2", "zoom": 10},
+            ttl=30 * 86400,
+            before=polite_wait,
         ) or {}
         addr = data.get("address") or {}
         place = addr.get("city") or addr.get("town") or addr.get("village") or addr.get("county")
@@ -143,8 +157,8 @@ def nws_point(lat, lon):
     radar = p.get("radarStation") or ""
     return {
         "office": p.get("gridId") or p.get("cwa"),
-        "forecast": p.get("forecast"),
-        "stations": p.get("observationStations"),
+        "forecast": _nws_url(p.get("forecast")),
+        "stations": _nws_url(p.get("observationStations")),
         "radar": radar[1:] if len(radar) == 4 else radar,
         "radar_full": radar,
         "city": rel.get("city"),
@@ -154,7 +168,7 @@ def nws_point(lat, lon):
 
 
 def nws_periods(url):
-    if not url:
+    if not _nws_url(url):
         return []
     data = get_json(url, ttl=1800, headers=NWS_HEADERS) or {}
     out = []
@@ -209,7 +223,7 @@ def nws_alerts(lat, lon):
 
 
 def nws_observation(stations_url):
-    if not stations_url:
+    if not _nws_url(stations_url):
         return None
     stations = get_json(stations_url, ttl=86400, headers=NWS_HEADERS) or {}
     features = stations.get("features") or []
@@ -217,7 +231,7 @@ def nws_observation(stations_url):
     for feat in features[:2]:
         sp = feat.get("properties") or {}
         sid = sp.get("stationIdentifier")
-        if not sid:
+        if not sid or not re.fullmatch(r"[A-Z0-9]{3,5}", sid):
             continue
         try:
             data = get_json(f"{NWS}/stations/{sid}/observations/latest", ttl=300, headers=NWS_HEADERS)
@@ -253,8 +267,13 @@ def nws_discussion(office):
     if not items:
         return None
     first = items[0]
-    url = first.get("@id") or f"{NWS}/products/{first.get('id')}"
-    product = get_json(url, ttl=1800, headers=NWS_HEADERS) or {}
+    url = _nws_url(first.get("@id"))
+    if url is None and re.fullmatch(r"[A-Za-z0-9-]+", str(first.get("id") or "")):
+        url = f"{NWS}/products/{first['id']}"
+    if url is None:
+        return None
+    # A product never changes once issued, so it can be cached for a long time.
+    product = get_json(url, ttl=86400, headers=NWS_HEADERS) or {}
     return {
         "office": office,
         "issued": product.get("issuanceTime"),
@@ -493,9 +512,13 @@ def wwa(sig, bbox, zoom):
     if sig not in ("W", "A", "Y"):
         raise ValueError("sig must be W, A or Y")
     south, west, north, east = (float(v) for v in bbox)
-    # Snap outward to whole degrees so panning reuses the cache.
-    south, west = math.floor(south), math.floor(west)
-    north, east = math.ceil(north), math.ceil(east)
+    # Snap outward to a coarse grid that grows with the view, so panning around
+    # and zooming in and out land on the same few boxes and reuse the cache.
+    span = max(north - south, east - west)
+    grid = 2 if span <= 4 else 5 if span <= 12 else 10 if span <= 30 else 20
+    south, west = math.floor(south / grid) * grid, math.floor(west / grid) * grid
+    north, east = math.ceil(north / grid) * grid, math.ceil(east / grid) * grid
+    south, north = max(-90, south), min(90, north)
     zoom = int(zoom)
     params = {
         "where": f"sig='{sig}'",
@@ -514,7 +537,7 @@ def wwa(sig, bbox, zoom):
     features = []
     for page in range(5):
         params["resultOffset"] = page * 2000
-        data = get_json(WWA_QUERY, dict(params), ttl=90) or {}
+        data = get_json(WWA_QUERY, dict(params), ttl=120) or {}
         batch = data.get("features") or []
         features += batch
         exceeded = data.get("exceededTransferLimit") or (data.get("properties") or {}).get("exceededTransferLimit")
@@ -583,8 +606,9 @@ def radar_frames(site, product, minutes):
     if not re.fullmatch(r"[A-Z0-9]{3}", site or "") or not re.fullmatch(r"[A-Z0-9]{3}", product or ""):
         raise ValueError("bad site or product")
     minutes = max(10, min(int(minutes), 180))
-    end = datetime.now(timezone.utc) + timedelta(minutes=5)
-    start = end - timedelta(minutes=minutes + 5)
+    now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    end = now - timedelta(minutes=now.minute % 5) + timedelta(minutes=10)
+    start = end - timedelta(minutes=minutes + 10)
     params = {
         "operation": "list", "radar": site, "product": product,
         "start": start.strftime("%Y-%m-%dT%H:%MZ"), "end": end.strftime("%Y-%m-%dT%H:%MZ"),
@@ -612,7 +636,11 @@ def model_grid(bbox, nx, ny):
     """Current temperature and wind on an nx by ny grid covering bbox."""
     south, west, north, east = (float(v) for v in bbox)
     south, north = max(-84.0, south), min(84.0, north)
-    nx, ny = max(3, min(int(nx), 12)), max(3, min(int(ny), 9))
+    nx, ny = max(3, min(int(nx), 9)), max(3, min(int(ny), 7))
+    # Fetch a third more on every side than is on screen, so small pans stay inside it.
+    pad_lat, pad_lon = (north - south) / 3, (east - west) / 3
+    south, north = max(-84.0, south - pad_lat), min(84.0, north + pad_lat)
+    west, east = west - pad_lon, east + pad_lon
     # Fixed step sizes and a snapped origin, so small pans hit the cache
     # instead of costing another batch of Open-Meteo calls.
     nice = [0.05, 0.1, 0.2, 0.25, 0.5, 1, 2, 2.5, 5, 10]
@@ -621,8 +649,8 @@ def model_grid(bbox, nx, ny):
     step_lon = pick((east - west) / (nx - 1))
     south = math.floor(south / step_lat) * step_lat
     west = math.floor(west / step_lon) * step_lon
-    ny = min(math.ceil((north - south) / step_lat) + 1, 11)
-    nx = min(math.ceil((east - west) / step_lon) + 1, 14)
+    ny = min(math.ceil((north - south) / step_lat) + 1, 9)
+    nx = min(math.ceil((east - west) / step_lon) + 1, 11)
     lats = [round(south + i * step_lat, 3) for i in range(ny)]
     lons = [round(west + j * step_lon, 3) for j in range(nx)]
     lat_list, lon_list = [], []
@@ -636,7 +664,8 @@ def model_grid(bbox, nx, ny):
         "current": "temperature_2m,wind_speed_10m,wind_direction_10m,wind_gusts_10m",
         "timezone": "UTC",
     }
-    data = get_json(OPEN_METEO, params, ttl=900)
+    # Open-Meteo's "current" values move every 15 minutes; 30 is plenty for a map overlay.
+    data = get_json(OPEN_METEO, params, ttl=1800)
     if isinstance(data, dict):
         data = [data]
     temp, speed, direction, gust = [], [], [], []
