@@ -39,6 +39,11 @@ let frames = [];
 let layers = [];
 let index = 0;
 let playing = false;
+// True while the newest frame is on screen by the user's choice (the default).
+// Then every refresh jumps to the newest scan. Stepping back, dragging the
+// slider off the end, or pausing on an older frame turns it off; returning to
+// the newest frame turns it back on.
+let followLatest = true;
 let playTimer = null;
 let loading = new Set();
 let sites = [];
@@ -482,6 +487,8 @@ function makeLayer(frame) {
 
 async function rebuild({ keepIndex = false } = {}) {
   if (!map) return;
+  // A fresh build (new product, radar or place) always starts on the newest frame.
+  if (!keepIndex) followLatest = true;
   const token = ++buildToken;
   const wasPlaying = playing;
   stop();
@@ -505,9 +512,11 @@ async function rebuild({ keepIndex = false } = {}) {
   frames = next;
   layers = frames.map((f) => makeLayer(f).addTo(map));
   index = frames.length - 1;
-  if (prevTime) {
+  if (prevTime && !followLatest) {
+    // Stay on the frame the user picked. If it has aged out of the loop,
+    // land on the oldest frame, which is the closest one still there.
     const k = frames.findIndex((f) => f.time === prevTime);
-    if (k >= 0) index = k;
+    index = k >= 0 ? k : 0;
   }
   if (p.id === 'future') index = 0;
   show(index);
@@ -561,9 +570,21 @@ function stop() {
   }
 }
 
+function atLatest() {
+  return frames.length > 0 && index === frames.length - 1;
+}
+
+// Every way a user picks a frame or pauses goes through here, so the
+// follow-the-newest-scan choice always matches what they did last.
+function userStop() {
+  stop();
+  followLatest = atLatest();
+}
+
 function step(delta) {
   stop();
   if (frames.length) show((index + delta + frames.length) % frames.length);
+  followLatest = atLatest();
 }
 
 function updateLoading() {
@@ -862,10 +883,10 @@ export function initRadar(container) {
     onclick: () => { if (state.loc) map.setView([state.loc.lat, state.loc.lon], 8); },
   });
 
-  ui.play = el('button', { class: 'icon-btn', 'aria-label': 'Play', html: uiIcon('play', 18), onclick: () => (playing ? stop() : play()) });
+  ui.play = el('button', { class: 'icon-btn', 'aria-label': 'Play', html: uiIcon('play', 18), onclick: () => (playing ? userStop() : play()) });
   ui.prev = el('button', { class: 'icon-btn', 'aria-label': 'Previous frame', html: uiIcon('prev', 18), onclick: () => step(-1) });
   ui.next = el('button', { class: 'icon-btn', 'aria-label': 'Next frame', html: uiIcon('next', 18), onclick: () => step(1) });
-  ui.slider = el('input', { type: 'range', min: '0', max: '0', value: '0', 'aria-label': 'Frame', oninput: (e) => { stop(); show(Number(e.target.value)); } });
+  ui.slider = el('input', { type: 'range', min: '0', max: '0', value: '0', 'aria-label': 'Frame', oninput: (e) => { stop(); show(Number(e.target.value)); followLatest = atLatest(); } });
   ui.label = el('span', { class: 'frame-label' });
   ui.spinner = el('span', { class: 'spinner', hidden: true, 'aria-label': 'Loading' });
   const timeline = el('div', { class: 'float timeline' }, ui.prev, ui.play, ui.next, ui.slider, ui.label, ui.spinner);
@@ -908,7 +929,7 @@ export function initRadar(container) {
 
   document.addEventListener('keydown', (e) => {
     if (state.view !== 'radar' || e.target.closest('input, select, textarea')) return;
-    if (e.key === ' ') { e.preventDefault(); playing ? stop() : play(); }
+    if (e.key === ' ') { e.preventDefault(); if (playing) userStop(); else play(); }
     if (e.key === 'ArrowLeft') step(-1);
     if (e.key === 'ArrowRight') step(1);
   });
