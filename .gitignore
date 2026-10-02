@@ -8,3 +8,16 @@ venv/
 *.tar.gz
 *.zip
 .DS_Store
+
+# Android build output and local SDK path
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+*.apk
+
+# Signing keys. NEVER commit these.
+*.jks
+*.keystore
+*.jks.b64
