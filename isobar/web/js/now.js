@@ -1,10 +1,11 @@
-import { state, el, esc, emit } from './core.js';
+import { state, el, emit } from './core.js';
 import { wxIcon, arrowIcon, uiIcon } from './icons.js';
 import {
-  temp, tempVal, tempColor, wind, precip, snow, pressure, distance, compass, wxText,
-  wall, wallNow, dayShort, timeLabel, instant, ago, eventColor, SPC_COLORS,
+  temp, wind, precip, pressure, distance, compass, wxText,
+  wall, wallNow, timeLabel, instant, ago, eventColor, SPC_COLORS,
 } from './util.js';
-import { hourlyChart } from './hourly.js';
+import { hourlyChart, contentWidth } from './hourly.js';
+import { stat, uvText } from './days.js';
 
 function currentHourIndex(f) {
   const now = wallNow();
@@ -26,22 +27,6 @@ function aqiText(aqi) {
   if (v <= 200) return [v, 'Unhealthy'];
   if (v <= 300) return [v, 'Very unhealthy'];
   return [v, 'Hazardous'];
-}
-
-function uvText(uv) {
-  if (uv === null || uv === undefined) return '';
-  if (uv < 3) return 'Low';
-  if (uv < 6) return 'Moderate';
-  if (uv < 8) return 'High';
-  if (uv < 11) return 'Very high';
-  return 'Extreme';
-}
-
-function stat(label, value, sub = '', extra = '') {
-  return el('div', { class: 'stat' },
-    el('div', { class: 'stat-label' }, label),
-    el('div', { class: 'stat-value', html: `${esc(value)}${extra}` }),
-    sub ? el('div', { class: 'stat-sub' }, sub) : null);
 }
 
 function alertBanner(alerts) {
@@ -72,69 +57,6 @@ function riskChip(days) {
     class: `risk ${cat ? 'risk-on' : ''}`, style: color ? `--risk:${color}` : '',
     onclick: () => emit('go', 'outlooks'),
   }, el('span', { class: 'risk-dot' }), text);
-}
-
-function nextDayRisk(days, dayIndex) {
-  const d = days && days[dayIndex];
-  if (!d || !d.category || d.category.level < 1) return null;
-  return el('span', { class: 'mini-risk', style: `--risk:${SPC_COLORS[d.category.label]}`, title: `SPC: ${d.category.name} risk` }, d.category.name);
-}
-
-function periodsForDate(periods, dateStr) {
-  return (periods || []).filter((p) => p.start && p.start.slice(0, 10) === dateStr);
-}
-
-function tenDay(f, periods, spcDays) {
-  const d = f.daily;
-  const lows = d.temperature_2m_min.map(tempVal);
-  const highs = d.temperature_2m_max.map(tempVal);
-  const lo = Math.min(...lows);
-  const hi = Math.max(...highs);
-  const span = Math.max(1, hi - lo);
-  const today = wallNow().toISOString().slice(0, 10);
-
-  const rows = d.time.map((dateStr, i) => {
-    const date = wall(dateStr);
-    const name = dateStr === today ? 'Today' : dayShort(date);
-    const left = ((lows[i] - lo) / span) * 100;
-    const width = Math.max(4, ((highs[i] - lows[i]) / span) * 100);
-    const grad = `linear-gradient(90deg, ${tempColor(d.temperature_2m_min[i])}, ${tempColor(d.temperature_2m_max[i])})`;
-    const pop = d.precipitation_probability_max[i];
-    const details = el('div', { class: 'day-detail', hidden: true });
-    const row = el('button', {
-      class: 'day', 'aria-expanded': 'false',
-      onclick: () => {
-        const open = details.hidden;
-        details.hidden = !open;
-        row.setAttribute('aria-expanded', String(open));
-        if (open && !details.childElementCount) fillDetails(details, f, i, periodsForDate(periods, dateStr));
-      },
-    },
-    el('span', { class: 'day-name' }, name),
-    el('span', { class: 'day-icon', html: wxIcon(d.weather_code[i], 1, 26) }),
-    el('span', { class: 'day-pop' }, pop >= 10 ? `${pop}%` : ''),
-    el('span', { class: 'day-lo' }, temp(d.temperature_2m_min[i])),
-    el('span', { class: 'day-range' }, el('span', { class: 'day-bar', style: `left:${left}%;width:${width}%;background:${grad}` })),
-    el('span', { class: 'day-hi' }, temp(d.temperature_2m_max[i])),
-    el('span', { class: 'day-extra' }, nextDayRisk(spcDays, i) || wxText(d.weather_code[i])));
-    return [row, details];
-  });
-  return el('div', { class: 'days' }, ...rows.flat());
-}
-
-function fillDetails(box, f, i, periods) {
-  const d = f.daily;
-  const grid = el('div', { class: 'detail-grid' },
-    stat('Feels like', `${temp(d.apparent_temperature_max[i])} / ${temp(d.apparent_temperature_min[i])}`),
-    stat('Precipitation', precip(d.precipitation_sum[i]), snow(d.snowfall_sum[i])),
-    stat('Wind', wind(d.wind_speed_10m_max[i]), `Gusts ${wind(d.wind_gusts_10m_max[i])}, from ${compass(d.wind_direction_10m_dominant[i])}`),
-    stat('UV index', d.uv_index_max[i] === null ? '--' : String(Math.round(d.uv_index_max[i])), uvText(d.uv_index_max[i])),
-    stat('Sunrise', timeLabel(wall(d.sunrise[i]))),
-    stat('Sunset', timeLabel(wall(d.sunset[i]))));
-  box.append(grid);
-  for (const p of periods) {
-    box.append(el('p', { class: 'nws-text' }, el('strong', {}, `${p.name}. `), p.detail));
-  }
 }
 
 export function renderNow(root) {
@@ -195,17 +117,15 @@ export function renderNow(root) {
     stat('Sunrise', timeLabel(wall(f.daily.sunrise[todayIdx]))),
     stat('Sunset', timeLabel(wall(f.daily.sunset[todayIdx]))));
 
-  const next = el('section', { class: 'block' },
+  // Now covers right now and the next 12 hours. The 10-day and longer hourly
+  // outlook live on the Forecast page.
+  const next = el('section', { class: 'block block-next' },
     el('div', { class: 'block-head' },
-      el('h2', {}, 'Next 24 hours'),
-      el('button', { class: 'link', onclick: () => emit('go', 'hourly') }, 'Hourly detail')),
-    hourlyChart(f, k, 24, { compact: true }));
+      el('h2', {}, 'Next 12 hours'),
+      el('button', { class: 'link', onclick: () => emit('go', 'forecast') }, 'Full forecast')),
+    hourlyChart(f, k, 12, { compact: true, fit: contentWidth(root) }));
 
-  const days = el('section', { class: 'block' },
-    el('div', { class: 'block-head' }, el('h2', {}, '10 days')),
-    tenDay(f, data.periods, state.spc));
-
-  root.append(...[banner, hero, stats, next, days].filter(Boolean));
+  root.append(...[banner, hero, next, stats].filter(Boolean));
 }
 
 function pressureTrend(h, k) {

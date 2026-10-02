@@ -1,6 +1,7 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
     id("com.chaquo.python")
 }
 
@@ -23,12 +24,16 @@ val keystorePath: String? = System.getenv("ISOBAR_KEYSTORE")?.takeIf { it.isNotB
 
 android {
     namespace = "io.github.nullangst.isobar"
-    compileSdk = 35
+    // Android 17. Targeting it also turns off the implicit "local network"
+    // grant Android 17 gives older apps, which shows up as "Nearby devices".
+    // Isobar only talks to its own server on 127.0.0.1 (which is not the local
+    // network) and to the internet, so it needs no permission beyond INTERNET.
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "io.github.nullangst.isobar"
         minSdk = 24
-        targetSdk = 35
+        targetSdk = 37
         versionCode = isobarVersionCode
         versionName = isobarVersion
 
@@ -51,7 +56,7 @@ android {
     }
 
     buildTypes {
-        release {
+        getByName("release") {
             isMinifyEnabled = false
             if (keystorePath != null) signingConfig = signingConfigs.getByName("release")
         }
@@ -61,14 +66,17 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget = JvmTarget.JVM_17
     }
 }
 
 dependencies {
-    implementation("androidx.appcompat:appcompat:1.7.0")
-    implementation("androidx.core:core-ktx:1.15.0")
+    implementation("androidx.appcompat:appcompat:1.7.1")
+    implementation("androidx.core:core-ktx:1.16.0")
 }
 
 // Copy the isobar package (server, data sources and web UI) out of the repo

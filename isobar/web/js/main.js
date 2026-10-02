@@ -4,7 +4,7 @@ import { state, api, on, emit, saveSettings, openExternal, toast, el, debounce }
 import { uiIcon } from './icons.js';
 import { ago } from './util.js';
 import { renderNow, currentHourIndex } from './now.js';
-import { renderHourly } from './hourly.js';
+import { renderForecast } from './hourly.js';
 import { initRadar, showRadar, hideRadar, focusGeometry } from './radar.js';
 import { needsCartoKey } from './basemap.js';
 import { initOutlooks, showOutlooks } from './outlooks.js';
@@ -12,7 +12,7 @@ import { renderAlerts, renderDiscussion } from './alerts.js';
 
 const VIEWS = [
   { id: 'now', name: 'Now', icon: 'now' },
-  { id: 'hourly', name: 'Hourly', icon: 'hourly' },
+  { id: 'forecast', name: 'Forecast', icon: 'hourly' },
   { id: 'radar', name: 'Radar', icon: 'radar', full: true },
   { id: 'outlooks', name: 'Outlooks', icon: 'outlooks', full: true },
   { id: 'alerts', name: 'Alerts', icon: 'alerts' },
@@ -63,7 +63,11 @@ function buildRail() {
   $('rail-settings').addEventListener('click', () => openSettings());
 }
 
+// Views that were renamed, so old saved settings and links still land somewhere sensible.
+const VIEW_ALIASES = { hourly: 'forecast' };
+
 function go(view) {
+  view = VIEW_ALIASES[view] || view;
   if (!VIEWS.some((v) => v.id === view)) view = 'now';
   const previous = state.view;
   state.view = view;
@@ -77,7 +81,7 @@ function go(view) {
 function render(view = state.view) {
   const root = $(`view-${view}`);
   if (view === 'now') renderNow(root);
-  if (view === 'hourly') renderHourly(root, state.data && state.data.forecast ? currentHourIndex(state.data.forecast) : 0);
+  if (view === 'forecast') renderForecast(root, state.data && state.data.forecast ? currentHourIndex(state.data.forecast) : 0);
   if (view === 'alerts') renderAlerts(root);
   if (view === 'discussion') renderDiscussion(root);
   if (view === 'radar') {
@@ -311,11 +315,10 @@ function mapKeySection(s) {
   input.addEventListener('change', saveKey);
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { saveKey(); input.blur(); } });
   return [
-    select('Map style', 'basemap', [['auto', 'Match theme'], ['dark', 'Dark'], ['light', 'Light'], ['streets', 'Streets'], ['satellite', 'Satellite']]),
+    select('Map style', 'basemap', [['satellite', 'Satellite'], ['auto', 'Match theme'], ['dark', 'Dark'], ['light', 'Light'], ['streets', 'Streets']]),
     el('label', { class: 'set-block' }, el('span', { class: 'set-label' }, 'CARTO API key'), input),
     el('p', { class: 'muted small' },
-      'The dark, light and street maps come from CARTO, which needs a free key. No account, they email it right back. ',
-      'Satellite uses Esri and works without one. '),
+      'Satellite is the default and needs nothing. The dark, light, street and match-theme maps come from CARTO, which needs a free key. No account, they email it right back. '),
     el('button', { class: 'link small', onclick: () => openExternal('https://carto.com/basemaps/apikey/') }, 'Get a free CARTO key ', el('span', { html: uiIcon('external', 14) })),
     cacheRow(),
   ];
@@ -436,6 +439,7 @@ on('settings', (patch) => {
 async function boot() {
   try {
     state.settings = await api('/api/settings');
+    if (state.settings.start_view === 'hourly') state.settings.start_view = 'forecast';
   } catch (err) {
     document.body.textContent = `Isobar could not start: ${err.message}`;
     return;
@@ -491,6 +495,12 @@ async function boot() {
   setInterval(() => { if (!document.hidden) loadData(); }, 10 * 60 * 1000);
   setInterval(() => { if (!document.hidden) refreshAlerts(); }, 2 * 60 * 1000);
   setInterval(renderTop, 30 * 1000);
+  let lastWidth = window.innerWidth;
+  window.addEventListener('resize', debounce(() => {
+    if (window.innerWidth === lastWidth) return;
+    lastWidth = window.innerWidth;
+    if (state.view === 'now' || state.view === 'forecast') render();
+  }, 250));
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && Date.now() - loadedAt > 10 * 60 * 1000) loadData();
   });

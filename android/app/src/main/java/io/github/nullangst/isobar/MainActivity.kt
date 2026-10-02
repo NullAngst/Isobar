@@ -5,8 +5,11 @@ import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
+import android.view.RoundedCorner
+import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
@@ -22,6 +25,8 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import com.chaquo.python.Python
 import kotlin.concurrent.thread
+import kotlin.math.max
+import kotlin.math.sqrt
 
 /**
  * The whole Android app is this one screen: a WebView showing the same UI as the
@@ -32,6 +37,11 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var frame: FrameLayout
     private lateinit var web: WebView
+
+    // How far the bottom bar has to move in (sides) and up, in CSS pixels, to
+    // stay clear of a rounded screen corner. Sent to the page as CSS variables.
+    private var cornerX = 0f
+    private var cornerY = 0f
 
     @SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -51,6 +61,7 @@ class MainActivity : AppCompatActivity() {
                     WindowInsetsCompat.Type.ime()
             )
             view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            measureCorners(view, bars.bottom, max(bars.left, bars.right))
             WindowInsetsCompat.CONSUMED
         }
 
@@ -68,6 +79,10 @@ class MainActivity : AppCompatActivity() {
         web.addJavascriptInterface(Bridge(), "IsobarAndroid")
 
         web.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView, url: String?) {
+                pushCorners()
+            }
+
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 // Only Isobar's own pages load in here. Anything else goes to the browser.
                 if (request.url.host == "127.0.0.1") return false
@@ -89,11 +104,9 @@ class MainActivity : AppCompatActivity() {
                 web.evaluateJavascript(
                     "(window.isobar && window.isobar.back) ? window.isobar.back() : false"
                 ) { result ->
-                    if (result != "true") {
-                        isEnabled = false
-                        onBackPressedDispatcher.onBackPressed()
-                        isEnabled = true
-                    }
+                    // Nothing left to close: send the app to the background, which is
+                    // what back does on the home screen of any app since Android 12.
+                    if (result != "true") moveTaskToBack(true)
                 }
             }
         })
@@ -123,6 +136,48 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    /**
+     * With three-button navigation the bar at the bottom of the screen already
+     * keeps content clear of the rounded corners. With gesture navigation that
+     * bar is only a thin strip, so the corners of the screen cut into the ends of
+     * Isobar's bottom bar. This works out how far to pull it in and up.
+     */
+    private fun measureCorners(view: View, bottomInset: Int, sideInset: Int) {
+        var x = 0f
+        var y = 0f
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val raw = view.rootWindowInsets
+            val radius = listOfNotNull(
+                raw?.getRoundedCorner(RoundedCorner.POSITION_BOTTOM_LEFT),
+                raw?.getRoundedCorner(RoundedCorner.POSITION_BOTTOM_RIGHT),
+            ).maxOfOrNull { it.radius } ?: 0
+            if (radius > 0) {
+                val r = radius.toFloat()
+                // Lift the bar until it clears the steepest part of the curve...
+                val lift = max(0f, 0.3f * r - bottomInset)
+                val above = bottomInset + lift
+                // ...then pull its ends in by however much curve is left at that height.
+                val side = if (above >= r) 0f else r - sqrt(r * r - (r - above) * (r - above))
+                val density = resources.displayMetrics.density
+                x = max(0f, side - sideInset) / density
+                y = lift / density
+                if (x > 0f) x += 4f // a little breathing room past the curve
+            }
+        }
+        if (x != cornerX || y != cornerY) {
+            cornerX = x
+            cornerY = y
+            pushCorners()
+        }
+    }
+
+    private fun pushCorners() {
+        if (!::web.isInitialized) return
+        val js = "document.documentElement.style.setProperty('--corner-x','${cornerX}px');" +
+            "document.documentElement.style.setProperty('--corner-y','${cornerY}px');"
+        web.evaluateJavascript(js, null)
     }
 
     private fun openExternally(uri: Uri) {

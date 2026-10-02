@@ -6,8 +6,8 @@ Type in a city, ZIP code or `lat, lon` and you get current conditions, an hourly
 
 ## What's in it
 
-- **Now**: current conditions, NWS forecast text, today's SPC risk, wind, humidity, pressure trend, visibility, UV, air quality, the next 24 hours as a chart, and a 10-day list you can expand for detail.
-- **Hourly**: 24 hours, 48 hours or 7 days as a chart plus a full table.
+- **Now**: active alerts, current conditions, NWS forecast text, today's SPC risk, the next 12 hours as a chart, then wind, humidity, pressure trend, visibility, UV and air quality.
+- **Forecast**: the hourly chart (24 hours, 48 hours or 7 days), the 10-day list you can expand for detail, and an hour-by-hour table.
 - **Radar**: reflectivity (national mosaic or a single radar), velocity, rotation (storm-relative velocity), echo tops, radar-estimated rainfall (1, 24, 48, 72 hours), future radar (HRRR), satellite (infrared, visible, water vapor), and model wind and temperature maps. Loops, play and step with space and the arrow keys.
 - **Radar sites**: every NEXRAD site is a dot on the map. Click one to see just that radar, click it again (or "Back to all radars") to return to the national mosaic. Velocity and rotation start on your nearest radar.
 - **Radar overlays**: warnings, watches, advisories, the SPC day 1 outlook and county lines.
@@ -77,11 +77,15 @@ What's different on Android:
 - The whole UI is the same, laid out for a phone: the view buttons move to a bottom bar, and the radar and outlook panels fold up into one button until you tap them.
 - There are no alert notifications. On the desktop they come from the tray icon, and Android needs a separate background service for that, which this build doesn't have yet. Keep WEA alerts turned on in your phone's settings.
 - The back button closes whatever is open (Settings, search, a map panel), then goes back to Now, then leaves the app.
+- With gesture navigation on a phone with rounded screen corners, the bottom bar pulls in at the ends so the corners don't cut off Now and Settings.
+- The only permission is internet access. The app targets Android 17, so Android doesn't hand it the "Nearby devices" (local network) permission it gives older apps automatically. Isobar talks to its own built-in server on the phone and to the weather services online, and neither counts as your local network.
 - Everything is stored inside the app's private storage, and uninstalling removes it all, settings included.
 
-## Set up the map key
+## Optional: a map key for the street maps
 
-The dark, light and street base maps come from CARTO, and CARTO now requires a free API key. Without one the maps still load, but every tile is stamped "API KEY REQUIRED".
+Out of the box, the radar and outlook maps sit on Esri satellite imagery with place names on top. That needs no key and works right away.
+
+If you'd rather have plain dark, light or street maps (or "Match theme", which follows the app's light or dark look), those come from CARTO, and CARTO requires a free API key. Without one those styles still load, but every tile is stamped "API KEY REQUIRED", so Isobar falls back to satellite until a key is set.
 
 1. Go to [carto.com/basemaps/apikey](https://carto.com/basemaps/apikey/) and request a key. No account needed, they email it straight back.
 2. In Isobar, open Settings and find Maps.
@@ -89,7 +93,7 @@ The dark, light and street base maps come from CARTO, and CARTO now requires a f
 
 The radar and outlook maps reload with the key right away. The key is saved in plain text in `settings.json` (see below), which is fine, since it's sent in every tile URL anyway and grants nothing but basemap tiles.
 
-A wrong key looks exactly like no key: you still get the watermark. If it's still stamped after you paste it, check the key for a stray space or a missing character. If you'd rather skip CARTO entirely, set Map style to Satellite, which comes from Esri and needs no key.
+Then pick the style under Settings, Maps, Map style, or in the radar's Layers panel. A wrong key looks exactly like no key: you still get the watermark. If it's still stamped after you paste it, check the key for a stray space or a missing character.
 
 ## Run from source
 
@@ -186,7 +190,7 @@ The workflow decodes the key onto the runner, signs the APK, checks the signatur
 
 ### Building the APK yourself
 
-You'll need the Android SDK (Android Studio installs it), JDK 17 and Python 3.12 on your PATH, since Chaquopy compiles the Python side with a matching Python.
+You'll need the Android SDK with the Android 17 (API 37) platform (Android Studio installs it), JDK 17 or newer, and Python 3.12 on your PATH, since Chaquopy compiles the Python side with a matching Python. The Gradle wrapper downloads Gradle 9.6 on its own the first time.
 
 1. Go into the Android project: `cd android`
 2. Build a debug APK, signed with Android's throwaway debug key: `./gradlew assembleDebug`
@@ -201,7 +205,7 @@ A debug build and a release build have different signatures, so one won't instal
 - **Radar, satellite, rainfall estimates, HRRR future radar, county lines**: the [Iowa Environmental Mesonet](https://mesonet.agron.iastate.edu/). US only. IEM is a university service run as a public good, so please don't point a hundred copies of this at it from one office.
 - **Warning and watch polygons on the map**: NOAA's watch/warning/advisory map service.
 - **Outlooks**: the [Storm Prediction Center](https://www.spc.noaa.gov/). US only.
-- **Base maps**: CARTO and OpenStreetMap, plus Esri for satellite imagery. CARTO needs your own free key (see "Set up the map key"); the free tier allows 5 million tile requests a month, which one person panning a radar map won't get near.
+- **Base maps**: Esri satellite imagery by default. CARTO and OpenStreetMap street maps if you add your own free key (see "Optional: a map key for the street maps"); the free tier allows 5 million tile requests a month, which one person panning a radar map won't get near.
 
 Things you should know before relying on it:
 

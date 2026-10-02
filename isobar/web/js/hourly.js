@@ -1,6 +1,7 @@
 // Hourly chart (shared with the Now view) and the Hourly view.
 
 import { state, el } from './core.js';
+import { tenDay } from './days.js';
 import { wxIcon, arrowIcon } from './icons.js';
 import {
   temp, tempVal, tempColor, wind, windVal, precip, compass, wxText,
@@ -30,14 +31,28 @@ function smoothPath(points) {
   return d;
 }
 
-function layoutFor(hours, compact) {
-  // Column widths are picked so each range fits a typical window without scrolling.
-  if (hours <= 24) return { col: 44, every: 1, iconEvery: compact ? 2 : 1, windEvery: compact ? 0 : 2 };
-  if (hours <= 48) return { col: 22, every: 3, iconEvery: 3, windEvery: 3 };
-  return { col: 6, every: 12, iconEvery: 6, windEvery: 6 };
+function layoutFor(hours, compact, fit, n) {
+  // Default column widths fit each range in a typical desktop window. With
+  // `fit` (the space available, in px) the columns stretch or squeeze to fill
+  // it, and the label spacing follows the column width so nothing collides.
+  let L;
+  if (hours <= 24) L = { col: 44, windEvery: compact ? 0 : 2 };
+  else if (hours <= 48) L = { col: 22, iconEvery: 3, labelEvery: 3, hourEvery: 3, windEvery: 3 };
+  else L = { col: 6, iconEvery: 6, labelEvery: 12, hourEvery: 12, windEvery: 6 };
+  if (fit && n > 1) {
+    const want = (fit - 36) / (n - 1);
+    L.col = Math.min(120, Math.max(compact ? 26 : L.col, want));
+  }
+  if (hours <= 24) {
+    L.iconEvery = L.col >= 36 ? 1 : 2;
+    L.labelEvery = L.col >= 34 ? 1 : 2;
+    L.hourEvery = L.col >= 42 ? 1 : 2;
+    if (L.windEvery) L.windEvery = L.col >= 60 ? 1 : 2;
+  }
+  return L;
 }
 
-export function hourlyChart(f, startIdx, hours, { compact = false } = {}) {
+export function hourlyChart(f, startIdx, hours, { compact = false, fit = 0 } = {}) {
   const h = f.hourly;
   const end = Math.min(h.time.length, startIdx + hours);
   const idx = [];
@@ -45,7 +60,7 @@ export function hourlyChart(f, startIdx, hours, { compact = false } = {}) {
   const wrap = el('div', { class: `hchart ${compact ? 'hchart-compact' : ''}` });
   if (idx.length < 2) return wrap;
 
-  const L = layoutFor(hours, compact);
+  const L = layoutFor(hours, compact, fit, idx.length);
   const padX = 18;
   const width = padX * 2 + (idx.length - 1) * L.col;
   const rows = {
@@ -127,7 +142,7 @@ export function hourlyChart(f, startIdx, hours, { compact = false } = {}) {
       g.innerHTML = wxIcon(h.weather_code[i], h.is_day[i], 24);
       svg.append(g);
     }
-    if (k % (compact ? 2 : L.every) === 0) {
+    if (k % L.labelEvery === 0) {
       svg.append(s('text', { class: 'hc-tlabel', x: x(k), y: tPts[k][1] - 9 }, temp(h.temperature_2m[i])));
     }
   });
@@ -145,7 +160,7 @@ export function hourlyChart(f, startIdx, hours, { compact = false } = {}) {
         opacity: (0.35 + 0.65 * Math.min(1, (h.precipitation[i] ?? 0) / 4)).toFixed(2),
       }));
     }
-    if (k % L.every === 0 && pop >= 20 && L.col * L.every >= 28) {
+    if (k % L.labelEvery === 0 && pop >= 20 && L.col * L.labelEvery >= 28) {
       svg.append(s('text', { class: 'hc-poplabel', x: x(k), y: rows.popTop - 5 }, `${pop}%`));
     }
   });
@@ -164,7 +179,7 @@ export function hourlyChart(f, startIdx, hours, { compact = false } = {}) {
   // Hour labels.
   idx.forEach((i, k) => {
     const date = wall(h.time[i]);
-    const every = hours > 48 ? 12 : L.every * (compact ? 2 : 1);
+    const every = L.hourEvery;
     if (k % every !== 0) return;
     const label = k === 0 ? 'Now' : (hours > 48 && date.getUTCHours() === 0 ? dayShort(date) : hourLabel(date));
     svg.append(s('text', { class: 'hc-hour', x: x(k), y: rows.hour }, label));
@@ -263,7 +278,16 @@ function hourTable(f, start, hours) {
     body));
 }
 
-export function renderHourly(root, startIdx) {
+// Width available for a chart inside a scrolling view, so it can fill the row.
+export function contentWidth(root) {
+  const cs = getComputedStyle(root);
+  const w = root.clientWidth - parseFloat(cs.paddingLeft || 0) - parseFloat(cs.paddingRight || 0);
+  return Math.max(280, Math.min(1080, w || 1080));
+}
+
+// The Forecast view: the hourly chart, the 10-day list, then the hour-by-hour table.
+// The range buttons redraw the chart and table in place so the page doesn't jump.
+export function renderForecast(root, startIdx) {
   root.replaceChildren();
   const data = state.data;
   if (!data || !data.forecast) {
@@ -271,15 +295,29 @@ export function renderHourly(root, startIdx) {
     return;
   }
   const f = data.forecast;
-  const hours = RANGES.find((r) => r[0] === range)[2];
-  const seg = el('div', { class: 'seg', role: 'group', 'aria-label': 'Range' },
-    ...RANGES.map(([key, text]) => el('button', {
+  const chartBox = el('div');
+  const tableBox = el('div');
+  const seg = el('div', { class: 'seg', role: 'group', 'aria-label': 'Range' });
+  const draw = () => {
+    const hours = RANGES.find((r) => r[0] === range)[2];
+    seg.replaceChildren(...RANGES.map(([key, text]) => el('button', {
       'aria-pressed': String(key === range),
-      onclick: () => { range = key; renderHourly(root, startIdx); },
+      onclick: () => { range = key; draw(); },
     }, text)));
-  root.append(
-    el('div', { class: 'view-head' }, el('h1', {}, 'Hourly'), seg),
-    el('section', { class: 'block' }, hourlyChart(f, startIdx, hours)),
-    el('section', { class: 'block' }, hourTable(f, startIdx, hours)));
-}
+    chartBox.replaceChildren(hourlyChart(f, startIdx, hours, { fit: contentWidth(root) }));
+    tableBox.replaceChildren(hourTable(f, startIdx, hours));
+  };
 
+  root.append(
+    el('div', { class: 'view-head' }, el('h1', {}, 'Forecast')),
+    el('section', { class: 'block block-first' },
+      el('div', { class: 'block-head' }, el('h2', {}, 'Hourly'), seg),
+      chartBox),
+    el('section', { class: 'block' },
+      el('div', { class: 'block-head' }, el('h2', {}, '10 days')),
+      tenDay(f, data.periods, state.spc)),
+    el('section', { class: 'block' },
+      el('div', { class: 'block-head' }, el('h2', {}, 'Hour by hour')),
+      tableBox));
+  draw();
+}

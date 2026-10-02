@@ -36,6 +36,9 @@ export function needsCartoKey() {
 export function resolveBasemap() {
   const pick = state.settings.basemap;
   if (pick && pick !== 'auto' && BASEMAPS[pick]) return pick;
+  // "Match theme" uses CARTO's light or dark map, which needs a key. Without
+  // one it shows satellite instead of a map stamped "API KEY REQUIRED".
+  if (!String(state.settings.carto_key || '').trim()) return 'satellite';
   return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
 }
 
