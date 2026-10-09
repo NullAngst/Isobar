@@ -66,6 +66,9 @@ def run_qt(server, args):
     app = QApplication(sys.argv[:1])
     app.setApplicationName(APP_NAME)
     app.setOrganizationName(APP_NAME)
+    # Matches the .desktop file the AppImage ships, so Wayland docks and task
+    # bars can pair the window with its icon.
+    app.setDesktopFileName("io.github.nullangst.isobar")
     icon = QIcon(str(icon_path()))
     app.setWindowIcon(icon)
 

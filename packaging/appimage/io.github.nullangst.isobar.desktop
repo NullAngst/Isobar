@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Isobar
+GenericName=Weather and radar
+Comment=Forecast, live radar, warnings and SPC outlooks
+Exec=Isobar
+Icon=io.github.nullangst.isobar
+Terminal=false
+Categories=Utility;
+Keywords=weather;radar;forecast;storm;tornado;alerts;
+StartupWMClass=Isobar

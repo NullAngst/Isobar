@@ -1,0 +1,5 @@
+#!/bin/sh
+# Entry point of the AppImage. The PyInstaller folder sits intact under
+# usr/lib/isobar, since the program only starts next to its _internal folder.
+HERE="$(dirname "$(readlink -f "$0")")"
+exec "$HERE/usr/lib/isobar/Isobar" "$@"

@@ -25,7 +25,7 @@ Type in a city, ZIP code or `lat, lon` and you get current conditions, an hourly
 
 Grab the archive for your system from the [Releases](https://github.com/NullAngst/Isobar/releases) page.
 
-On Linux and Windows, KEEP THE `Isobar` PROGRAM INSIDE ITS FOLDER. It loads everything else from the `_internal` folder next to it, so if you move the program out on its own it won't start. Put the whole folder wherever you like and make a shortcut or symlink to the program instead.
+On Windows, and with the Linux `.tar.gz`, KEEP THE `Isobar` PROGRAM INSIDE ITS FOLDER. It loads everything else from the `_internal` folder next to it, so if you move the program out on its own it won't start. Put the whole folder wherever you like and make a shortcut or symlink to the program instead.
 
 ### Linux
 
@@ -39,13 +39,31 @@ sudo zypper install libxcb-cursor0 libxkbcommon-x11-0 mozilla-nss libXcomposite1
 
 On Debian or Ubuntu it's `sudo apt install libxcb-cursor0 libxkbcommon-x11-0 libnss3 libxcomposite1 libxdamage1 libxrandr2 libxtst6 libasound2`, or whichever names your distro uses for the same libraries.
 
+There are two Linux downloads with the same app inside. The AppImage is one file you mark executable and run. The `.tar.gz` is a folder you unpack. Pick the AppImage unless you have a reason not to.
+
+#### AppImage
+
+The AppImage also needs FUSE to mount itself, which most desktops already have. If it says it can't mount, install it. In my case that's `sudo zypper install fuse3`, on Debian or Ubuntu `sudo apt install fuse3`, or whichever package gives you `fusermount3` or `fusermount`.
+
+1. Download `Isobar-<version>-linux-x86_64.AppImage`.
+2. Move it somewhere permanent: `mkdir -p ~/Applications && mv Isobar-*-linux-x86_64.AppImage ~/Applications/` since that's where AppImage tools look by default.
+3. Make it executable: `chmod +x ~/Applications/Isobar-*-linux-x86_64.AppImage`
+4. Run it: `~/Applications/Isobar-*-linux-x86_64.AppImage`
+4.5. Optional: give it a menu entry with Gear Lever, AppImageLauncher, or whichever integration tool you use. The icon and desktop file are inside the AppImage, so they pick it up on their own.
+
+No FUSE and don't want to install it? Run it with `--appimage-extract-and-run`. It unpacks to a temp folder on every launch, so it starts slower, but it works.
+
+To update, download the new AppImage and delete the old one. Or let AppImageUpdate (or Gear Lever) do it, since the AppImage knows where its releases live and only downloads the parts that changed. Your settings live outside the AppImage either way, so they stay.
+
+#### Folder (.tar.gz)
+
 1. Download `Isobar-<version>-linux-x86_64.tar.gz`.
 2. Extract it: `tar -xzf Isobar-*-linux-x86_64.tar.gz`
 3. Move the folder somewhere permanent: `mv Isobar ~/.local/share/` since that's where per-user apps usually live.
 4. Run it: `~/.local/share/Isobar/Isobar`
 4.5. Optional: link it onto your PATH with `ln -s ~/.local/share/Isobar/Isobar ~/.local/bin/isobar`
 
-If the window opens blank or it exits right away, try `Isobar --no-sandbox`. Some setups (containers, hardened kernels, some Flatpak-style sandboxes) block Chromium's own sandbox. If it's a VM or the GPU driver is the problem, add `--software-gl`.
+With either download, if the window opens blank or it exits right away, add `--no-sandbox` to the command. Some setups (containers, hardened kernels, some Flatpak-style sandboxes) block Chromium's own sandbox. If it's a VM or the GPU driver is the problem, add `--software-gl`.
 
 ### Windows
 
@@ -185,7 +203,7 @@ Settings (units, theme, saved places, radar choices) live in one JSON file. The 
 
 ## Building releases
 
-The workflow in `.github/workflows/build.yml` builds Linux, Windows and macOS on GitHub's runners with PyInstaller, builds and signs the Android APK with Gradle, then attaches all of it to the release. I do this from the GitHub web UI, so that's what these steps use.
+The workflow in `.github/workflows/build.yml` builds Linux (as a folder and an AppImage), Windows and macOS on GitHub's runners with PyInstaller, builds and signs the Android APK with Gradle, then attaches all of it to the release. I do this from the GitHub web UI, so that's what these steps use.
 
 The Android build needs a signing key in the repo's secrets first. That's a one-time setup, covered in the next section. Until it's done, the Android job fails with a message pointing there, and the desktop builds still go through.
 
@@ -195,9 +213,19 @@ The Android build needs a signing key in the repo's secrets first. That's a one-
 4. Make a new tag like `v1.0.1` and give the release a title.
 5. Click "Publish release".
 6. Wait. The tests run first, then all four builds in parallel, roughly 10 to 15 minutes in all. Progress is on the Actions tab. If the tests fail, nothing builds.
-7. Refresh the release page. The `.tar.gz`, two `.zip` files and the `.apk` are attached.
+7. Refresh the release page. The `.AppImage` and its `.zsync` update file, the `.tar.gz`, two `.zip` files and the `.apk` are attached.
 
 For a test build without making a release, go to Actions, pick "Build and release", and click "Run workflow". The archives show up as artifacts at the bottom of that run's page.
+
+### Building the AppImage yourself
+
+The workflow does this on its own. To do it on your machine, from a source checkout with the virtual environment active:
+
+1. Install PyInstaller: `pip install pyinstaller`
+2. Build the app folder: `pyinstaller --noconfirm --clean isobar.spec`
+3. Wrap it: `bash packaging/appimage/build-appimage.sh v1.4.0` (the last part is only the label in the file name)
+
+The AppImage and its `.zsync` land in the repo root. The script downloads `appimagetool` from its "continuous" release the first time, so it always gets the current one. The tradeoff is that nothing checks that download against a known hash. If you already have `appimagetool`, point the script at it with `APPIMAGETOOL=/path/to/appimagetool` and it skips the download.
 
 If you upload the repo through the web UI and the `.github` folder doesn't come along (some file pickers hide dot folders), use "Add file", then "Create new file", type `.github/workflows/build.yml` as the name, and paste the file in.
 
@@ -252,7 +280,7 @@ Things you should know before relying on it:
 - The Wind and Temperature maps are model output from Open-Meteo, not station observations. They can be off by a few degrees or a few mph, and they don't show storm-scale gusts.
 - Single-radar products update as fast as IEM processes them, usually within a few minutes of the scan. That's fine for watching weather. It isn't a replacement for a Level II viewer like GR2Analyst if you're tracking a tornado in real time.
 - If any of these services go down or change their formats, the matching part of the app goes blank until it's fixed. The rest keeps working.
-- The download is big, about 440 MB unpacked on Linux. Almost all of that is Qt WebEngine (a full Chromium engine). That's the price of a real map and chart renderer in a desktop window. If that bothers you, run from source with `--browser`.
+- The download is big: the AppImage is about 180 MB, and the folder is about 440 MB unpacked. Almost all of that is Qt WebEngine (a full Chromium engine). That's the price of a real map and chart renderer in a desktop window. If that bothers you, run from source with `--browser`.
 - I beg you not to treat this as your only warning source. Have a NOAA weather radio or WEA alerts on your phone too. Isobar only notifies you while it's running.
 
 ## License
