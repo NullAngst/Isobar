@@ -6,10 +6,10 @@
 // Reflectivity tiles are decoded back to dBZ in the browser and repainted
 // with the selected palette and clutter cutoff.
 
-import { state, api, IEM, proxyUrl, on, saveSettings, toast, el, debounce, esc } from './core.js';
+import { state, api, IEM, proxyUrl, on, saveSettings, toast, el, debounce, esc, openExternal } from './core.js';
 import { createMap, applyBasemap, setBorders, locationMarker, BASEMAPS } from './basemap.js';
 import { PALETTES, paletteLUT, colorIndex, dbzToIndex } from './ramps.js';
-import { hazardColor, hazardName, instant, ago, tempRGB, windRGB, tempVal, windVal, windUnit, SPC_COLORS } from './util.js';
+import { hazardColor, hazardName, instant, ago, tempRGB, windRGB, tempVal, windVal, windUnit, SPC_COLORS, MCD_COLOR } from './util.js';
 import { uiIcon } from './icons.js';
 
 const TILE = (layer, cache = 'c') => `https://mesonet{s}.agron.iastate.edu/${cache}/tile.py/1.0.0/${layer}/{z}/{x}/{y}.png`;
@@ -50,8 +50,17 @@ let sites = [];
 let sitesLayer = null;
 let wwaLayers = { Y: null, A: null, W: null };
 let outlookLayer = null;
+let mcdLayer = null;
+let reportsLayer = null;
 let fieldLayer = null;
 let highlight = null;
+let highlightTimer = null;
+// Each overlay counts its refreshes. A response that comes back after a newer
+// refresh started (or after the overlay was switched off) is thrown away, so a
+// slow answer can never put back a layer the user just turned off.
+const seqs = { wwa: 0, outlook: 0, mcd: 0, reports: 0 };
+let mcdAt = 0;
+let reports = { hours: 0, at: 0, features: [] };
 let marker = null;
 let buildToken = 0;
 let lastBuild = 0;
@@ -642,6 +651,7 @@ const TOP_PRIORITY = { TO: 5, EW: 4, SV: 3, FF: 3 };
 
 async function refreshWWA() {
   if (!map) return;
+  const seq = ++seqs.wwa;
   const want = {
     W: state.settings.radar_layers.warnings,
     A: state.settings.radar_layers.watches,
@@ -659,6 +669,7 @@ async function refreshWWA() {
         sig, z: Math.round(z),
         s: b.getSouth().toFixed(2), w: b.getWest().toFixed(2), n: b.getNorth().toFixed(2), e: b.getEast().toFixed(2),
       });
+      if (seq !== seqs.wwa) return;
       fc.features.sort((a, c) => (TOP_PRIORITY[a.properties.phenom] || 0) - (TOP_PRIORITY[c.properties.phenom] || 0));
       const layer = L.geoJSON(fc, {
         style: (f) => wwaStyle(f.properties),
@@ -671,6 +682,7 @@ async function refreshWWA() {
     }
   }
   for (const sig of ['Y', 'A', 'W']) if (wwaLayers[sig]) wwaLayers[sig].bringToFront();
+  if (mcdLayer) mcdLayer.bringToFront();
 }
 
 function wwaStyle(p) {
@@ -690,10 +702,12 @@ function wwaPopup(p) {
 }
 
 async function refreshOutlook() {
+  const seq = ++seqs.outlook;
   if (outlookLayer) { map.removeLayer(outlookLayer); outlookLayer = null; }
   if (!state.settings.radar_layers.outlook) return;
   try {
     const o = await api('/api/spc', { day: 1, kind: 'cat' });
+    if (seq !== seqs.outlook) return;
     outlookLayer = L.geoJSON({ type: 'FeatureCollection', features: o.features }, {
       pane: 'outlook',
       interactive: false,
@@ -705,6 +719,127 @@ async function refreshOutlook() {
   } catch (err) {
     console.warn('outlook overlay', err);
   }
+}
+
+// ------------------------------------------------------------------ SPC mesoscale discussions
+
+function popupLink(text, url) {
+  return el('button', { class: 'link small', onclick: () => openExternal(url) }, text, ' ', el('span', { html: uiIcon('external', 12) }));
+}
+
+async function refreshMcd() {
+  const seq = ++seqs.mcd;
+  if (!state.settings.radar_layers.mcd) {
+    if (mcdLayer) { map.removeLayer(mcdLayer); mcdLayer = null; }
+    return;
+  }
+  try {
+    const fc = await api('/api/spc/mcd');
+    if (seq !== seqs.mcd) return;
+    if (mcdLayer) map.removeLayer(mcdLayer);
+    mcdAt = Date.now();
+    mcdLayer = L.geoJSON(fc, {
+      style: { color: MCD_COLOR, weight: 2.4, dashArray: '2 5', fillColor: MCD_COLOR, fillOpacity: 0.08, opacity: 1 },
+      // Popups are built as DOM nodes, so nothing from the map service is ever parsed as HTML.
+      onEachFeature: (f, lyr) => lyr.bindPopup(() => {
+        const p = f.properties;
+        return el('div', { class: 'pop' },
+          el('strong', { class: 'pop-title', style: `--c:${MCD_COLOR}` }, p.name),
+          p.expires ? el('span', {}, `Until ${instant(p.expires, true)}`) : null,
+          p.issued ? el('span', {}, `Issued ${instant(p.issued, true)}`) : null,
+          el('span', {}, popupLink('Read it on spc.noaa.gov', p.link)));
+      }, { className: 'iso-popup', maxWidth: 320 }),
+    }).addTo(map);
+  } catch (err) {
+    console.warn('mcd overlay', err);
+  }
+}
+
+// ------------------------------------------------------------------ local storm reports
+
+const REPORT_HOURS = ['3', '6', '12', '24', '48'];
+const MAX_REPORT_MARKERS = 1500;
+const REPORT_KINDS = [
+  // [test on the report text, legend name, color]
+  [/TORNADO|FUNNEL|WATERSPOUT/, 'Tornado', '#ff2a2a'],
+  [/HAIL/, 'Hail', '#22c55e'],
+  [/WND|WIND|DOWNBURST/, 'Wind', '#3d8bfd'],
+  [/FLOOD/, 'Flood', '#14b8a6'],
+  [/SNOW|SLEET|ICE|BLIZZARD|FREEZ/, 'Winter', '#c084fc'],
+  [/.*/, 'Other', '#9aa6b2'],
+];
+
+function reportKind(text) {
+  const up = String(text || '').toUpperCase();
+  return REPORT_KINDS.find(([re]) => re.test(up));
+}
+
+function reportHours() {
+  const h = (state.settings.radar_options || {}).reports;
+  return REPORT_HOURS.includes(h) ? h : '12';
+}
+
+function titleWords(text) {
+  return String(text || '').toLowerCase().replace(/\btstm\b/g, 'thunderstorm').replace(/\bwnd\b/g, 'wind')
+    .replace(/\bgst\b/g, 'gust').replace(/\bdmg\b/g, 'damage').replace(/^./, (c) => c.toUpperCase());
+}
+
+function reportPopup(p) {
+  const [, , color] = reportKind(p.text);
+  const size = p.magnitude ? `${p.magnitude}${p.unit ? ` ${p.unit.toLowerCase()}` : ''}` : '';
+  const place = [p.city, p.county ? `${p.county} County` : '', p.state].filter(Boolean).join(', ');
+  return el('div', { class: 'pop' },
+    el('strong', { class: 'pop-title', style: `--c:${color}` }, `${titleWords(p.text) || 'Report'}${size ? `, ${size}` : ''}`),
+    place ? el('span', {}, place) : null,
+    p.valid ? el('span', {}, `${instant(p.valid, true)} (${ago(p.valid)})`) : null,
+    p.source ? el('span', {}, `Reported by ${p.source.toLowerCase()}`) : null,
+    p.remark ? el('span', {}, p.remark) : null);
+}
+
+function drawReports() {
+  if (reportsLayer) { map.removeLayer(reportsLayer); reportsLayer = null; }
+  if (!state.settings.radar_layers.reports || !reports.features.length) return;
+  // Only what's on screen gets a marker, newest first, so a busy day stays responsive.
+  const b = map.getBounds().pad(0.2);
+  const visible = reports.features
+    .filter((f) => b.contains([f.geometry.coordinates[1], f.geometry.coordinates[0]]))
+    .sort((a, c) => String(c.properties.valid).localeCompare(String(a.properties.valid)))
+    .slice(0, MAX_REPORT_MARKERS)
+    .reverse(); // oldest drawn first, so the newest sit on top
+  reportsLayer = L.layerGroup(visible.map((f) => {
+    const [, , color] = reportKind(f.properties.text);
+    const tornado = color === REPORT_KINDS[0][2];
+    return L.circleMarker([f.geometry.coordinates[1], f.geometry.coordinates[0]], {
+      pane: 'reports', radius: tornado ? 6.5 : 4.5, weight: 1.2, color: '#0a0e14', opacity: 0.9,
+      fillColor: color, fillOpacity: 0.95, bubblingMouseEvents: false,
+    }).bindPopup(() => reportPopup(f.properties), { className: 'iso-popup', maxWidth: 300 });
+  })).addTo(map);
+}
+
+async function refreshReports({ force = false } = {}) {
+  const seq = ++seqs.reports;
+  if (!state.settings.radar_layers.reports) { drawReports(); return; }
+  const hours = Number(reportHours());
+  if (force || reports.hours !== hours || Date.now() - reports.at > 5 * 60000) {
+    try {
+      const fc = await api('/api/reports', { hours });
+      if (seq !== seqs.reports) return;
+      reports = { hours, at: Date.now(), features: fc.features || [] };
+    } catch (err) {
+      console.warn('storm reports', err);
+      if (seq !== seqs.reports) return;
+    }
+  }
+  drawReports();
+}
+
+// Everything drawn over the radar, refreshed on its own clock. Watches and
+// warnings ask the server every time (it caches for two minutes); the rest
+// only when their copy here has aged out.
+function refreshOverlays() {
+  refreshWWA();
+  if (Date.now() - mcdAt > 2 * 60000 || !mcdLayer) refreshMcd();
+  if (state.settings.radar_layers.reports && Date.now() - reports.at > 5 * 60000) refreshReports();
 }
 
 // ------------------------------------------------------------------ panels
@@ -800,6 +935,8 @@ function buildLayersPanel() {
         saveSettings({ radar_layers: { [key]: e.target.checked } });
         if (['warnings', 'watches', 'advisories'].includes(key)) refreshWWA();
         if (key === 'outlook') refreshOutlook();
+        if (key === 'mcd') refreshMcd();
+        if (key === 'reports') { reportsBox.hidden = !e.target.checked; refreshReports(); }
         if (key === 'counties') setBorders(map, e.target.checked);
       },
     }),
@@ -830,11 +967,23 @@ function buildLayersPanel() {
   });
   const minLabel = el('span', { class: 'muted' }, `${s.radar_min_dbz} dBZ`);
 
+  const reportsHours = el('select', {
+    'aria-label': 'Storm reports from the last',
+    onchange: (e) => { saveSettings({ radar_options: { reports: e.target.value } }); refreshReports(); },
+  }, ...REPORT_HOURS.map((h) => el('option', { value: h }, `Last ${h} hours`)));
+  reportsHours.value = reportHours();
+  const reportsBox = el('div', { hidden: !s.radar_layers.reports },
+    el('label', { class: 'field' }, reportsHours),
+    el('div', { class: 'report-key' }, ...REPORT_KINDS.map(([, name, color]) => el('span', { style: `--c:${color}` }, el('i'), name))));
+
   return el('div', { class: 'layers-body' },
     el('h3', {}, 'Overlays'),
     toggle('warnings', 'Warnings'),
     toggle('watches', 'Watches'),
     toggle('advisories', 'Advisories'),
+    toggle('mcd', 'SPC mesoscale discussions'),
+    toggle('reports', 'Storm reports'),
+    reportsBox,
     toggle('outlook', 'SPC day 1 outlook'),
     toggle('counties', 'County lines'),
     el('h3', {}, 'Display'),
@@ -915,8 +1064,11 @@ export function initRadar(container) {
   map.setView(start, state.loc ? 7 : 4);
   setBorders(map, state.settings.radar_layers.counties);
 
+  map.createPane('reports').style.zIndex = 610;
+
   map.on('moveend', debounce(() => {
     refreshWWA();
+    drawReports();
     if (product().field) ensureField();
   }, 450));
 
@@ -953,7 +1105,7 @@ export function initRadar(container) {
   setInterval(() => {
     if (state.view !== 'radar' || document.hidden) return;
     if (Date.now() - lastBuild > refreshAfter() && !product().field) rebuild({ keepIndex: !playing });
-    refreshWWA();
+    refreshOverlays();
   }, 60000);
 
   if (state.loc) marker = locationMarker([state.loc.lat, state.loc.lon]).addTo(map);
@@ -979,7 +1131,7 @@ export function showRadar() {
   setTimeout(() => {
     map.invalidateSize();
     if (!built || Date.now() - lastBuild > refreshAfter()) rebuild({ keepIndex: true });
-    refreshWWA();
+    refreshOverlays();
     refreshOutlook();
   }, 30);
 }
@@ -991,10 +1143,15 @@ export function hideRadar() {
 export function focusGeometry(geometry) {
   if (!map || !geometry) return;
   if (highlight) map.removeLayer(highlight);
-  highlight = L.geoJSON(geometry, {
+  clearTimeout(highlightTimer);
+  const shape = L.geoJSON(geometry, {
     pane: 'top', interactive: false,
     style: { color: '#ffffff', weight: 3, fill: false, dashArray: '2 6', className: 'focus-outline' },
-  }).addTo(map);
-  setTimeout(() => map.fitBounds(highlight.getBounds().pad(0.6), { maxZoom: 10 }), 60);
-  setTimeout(() => { if (highlight) { map.removeLayer(highlight); highlight = null; } }, 30000);
+  });
+  // An empty or malformed geometry has no bounds, and fitBounds would throw on it.
+  const bounds = shape.getBounds();
+  if (!bounds.isValid()) return;
+  highlight = shape.addTo(map);
+  setTimeout(() => map.fitBounds(bounds.pad(0.6), { maxZoom: 10 }), 60);
+  highlightTimer = setTimeout(() => { if (highlight === shape) { map.removeLayer(shape); highlight = null; } }, 30000);
 }

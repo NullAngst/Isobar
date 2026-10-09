@@ -2,7 +2,7 @@ import { state, el, emit } from './core.js';
 import { wxIcon, arrowIcon, uiIcon } from './icons.js';
 import {
   temp, wind, precip, pressure, distance, compass, wxText,
-  wall, wallNow, timeLabel, instant, ago, eventColor, SPC_COLORS,
+  wall, wallNow, timeLabel, instant, ago, eventColor, SPC_COLORS, MCD_COLOR,
 } from './util.js';
 import { hourlyChart, contentWidth } from './hourly.js';
 import { stat, uvText } from './days.js';
@@ -29,8 +29,10 @@ function aqiText(aqi) {
   return [v, 'Hazardous'];
 }
 
-function alertBanner(alerts) {
-  if (!alerts || !alerts.length) return null;
+function alertBanner(alerts, mcds) {
+  alerts = alerts || [];
+  mcds = mcds || [];
+  if (!alerts.length && !mcds.length) return null;
   const items = alerts.slice(0, 3).map((a) => el('button', {
     class: 'banner', style: `--hz:${eventColor(a.event)}`,
     onclick: () => emit('go', 'alerts'),
@@ -41,6 +43,14 @@ function alertBanner(alerts) {
   el('span', { class: 'banner-go', html: uiIcon('next', 16) })));
   if (alerts.length > 3) {
     items.push(el('button', { class: 'banner banner-more', onclick: () => emit('go', 'alerts') }, `${alerts.length - 3} more alerts`));
+  }
+  // An SPC mesoscale discussion over the place often comes an hour or so before a watch.
+  for (const m of mcds.slice(0, 2)) {
+    items.push(el('button', { class: 'banner', style: `--hz:${MCD_COLOR}`, onclick: () => emit('go', 'alerts') },
+      el('span', { class: 'banner-bar' }),
+      el('span', { class: 'banner-event' }, m.name),
+      el('span', { class: 'banner-until' }, 'from the Storm Prediction Center'),
+      el('span', { class: 'banner-go', html: uiIcon('next', 16) })));
   }
   return el('div', { class: 'banners' }, ...items);
 }
@@ -82,7 +92,7 @@ export function renderNow(root) {
   const k = currentHourIndex(f);
   const todayIdx = 0;
 
-  const banner = alertBanner(data.alerts);
+  const banner = alertBanner(data.alerts, data.mcds);
 
   const obs = data.obs && data.obs.time && (Date.now() - new Date(data.obs.time)) < 3 * 3600e3
     ? el('p', { class: 'obs' }, `Observed ${temp(data.obs.temp_c)} at ${data.obs.station}, ${ago(data.obs.time)}`)
@@ -107,11 +117,11 @@ export function renderNow(root) {
   const precipToday = f.daily.precipitation_sum[todayIdx];
   const stats = el('section', { class: 'stats' },
     stat('Wind', wind(c.wind_speed_10m), `Gusts ${wind(c.wind_gusts_10m)}, from ${compass(c.wind_direction_10m)}`, ` <span class="stat-arrow">${arrowIcon(c.wind_direction_10m, 18)}</span>`),
-    stat('Humidity', `${Math.round(c.relative_humidity_2m)}%`, `Dew point ${temp(h.dew_point_2m[k])}`),
+    stat('Humidity', pct(c.relative_humidity_2m), `Dew point ${temp(h.dew_point_2m[k])}`),
     stat('Pressure', pressure(c.pressure_msl), pressureTrend(h, k)),
     stat('Visibility', distance(h.visibility[k])),
     stat('UV index', h.uv_index[k] === null ? '--' : String(Math.round(h.uv_index[k])), uvText(h.uv_index[k])),
-    stat('Cloud cover', `${Math.round(c.cloud_cover)}%`),
+    stat('Cloud cover', pct(c.cloud_cover)),
     stat('Air quality', String(aqi), aqiLabel),
     stat('Rain today', precip(precipToday), `${f.daily.precipitation_probability_max[todayIdx] ?? 0}% chance`),
     stat('Sunrise', timeLabel(wall(f.daily.sunrise[todayIdx]))),
@@ -126,6 +136,10 @@ export function renderNow(root) {
     hourlyChart(f, k, 12, { compact: true, fit: contentWidth(root) }));
 
   root.append(...[banner, hero, next, stats].filter(Boolean));
+}
+
+function pct(v) {
+  return v === null || v === undefined ? '--' : `${Math.round(v)}%`;
 }
 
 function pressureTrend(h, k) {

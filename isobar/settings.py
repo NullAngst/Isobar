@@ -22,7 +22,7 @@ DEFAULTS = {
     "radar_speed_ms": 450,
     "radar_product": "refl",    # refl | vel | srv | tops | rain | future | sat | wind | temp
     "radar_site": "mosaic",     # mosaic | auto | radar ID such as FFC
-    "radar_options": {"rain": "q2-n1p", "sat": "13"},
+    "radar_options": {"rain": "q2-n1p", "sat": "13", "reports": "12"},
     "radar_layers": {
         "warnings": True,
         "watches": True,
@@ -30,14 +30,19 @@ DEFAULTS = {
         "outlook": False,
         "counties": False,
         "sites": False,
+        "mcd": True,
+        "reports": False,
     },
-    "notify": "warnings",       # off | warnings | all
+    "discussion_product": "afd",  # afd | hwo
+    "notify": "warnings",       # off | warnings | watches | all
     "tray_on_close": False,
     "location": None,           # {"name", "lat", "lon"}
     "saved": [],                # list of {"name", "lat", "lon"}
 }
 
-_lock = threading.Lock()
+# Reentrant, since save() holds it across its own load() so two saves at
+# once can't both read the old file and drop each other's change.
+_lock = threading.RLock()
 
 
 def _file():
@@ -54,6 +59,29 @@ PATTERNS = {
     "start_view": re.compile(r"[a-z]{2,16}"),
 }
 OPTION_VALUE = re.compile(r"[a-z0-9-]{1,16}")
+
+# Settings with a fixed set of answers. Anything else is dropped, since a
+# stray value like theme "foo" would leave the page unstyled.
+ENUMS = {
+    "units": {"us", "metric"},
+    "clock": {"12", "24"},
+    "theme": {"system", "dark", "light", "midnight"},
+    # "hourly" is the old name of the forecast view, kept so old files still load.
+    "start_view": {"now", "forecast", "hourly", "radar", "outlooks", "alerts", "discussion"},
+    "basemap": {"satellite", "auto", "dark", "light", "streets"},
+    "notify": {"off", "warnings", "watches", "all"},
+    "radar_product": {"refl", "vel", "srv", "tops", "rain", "future", "sat", "wind", "temp"},
+    "discussion_product": {"afd", "hwo"},
+}
+
+# Numbers are clamped into these ranges rather than rejected. A loop speed of
+# 0 ms would otherwise spin the radar timer as fast as the browser allows.
+RANGES = {
+    "radar_opacity": (0.1, 1.0),
+    "radar_min_dbz": (-32, 75),
+    "radar_loop_minutes": (10, 180),
+    "radar_speed_ms": (100, 3000),
+}
 MAX_SAVED = 50
 
 
@@ -100,9 +128,14 @@ def _valid(key, default, value):
     if isinstance(default, (int, float)):
         if not _number(value):
             raise ValueError(key)
+        if key in RANGES:
+            lo, hi = RANGES[key]
+            value = min(hi, max(lo, value))
         return value
     if isinstance(default, str):
         if not isinstance(value, str) or len(value) > 200:
+            raise ValueError(key)
+        if key in ENUMS and value not in ENUMS[key]:
             raise ValueError(key)
         pattern = PATTERNS.get(key)
         if pattern is not None and not pattern.fullmatch(value):
@@ -139,9 +172,8 @@ def load() -> dict:
 
 
 def save(patch: dict) -> dict:
-    current = load()
-    merged = _merge(current, patch)
     with _lock:
+        merged = _merge(load(), patch)
         tmp = _file().with_suffix(".tmp")
         # Owner-only: the file can hold a CARTO key and your saved places.
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)

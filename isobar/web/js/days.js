@@ -37,16 +37,19 @@ export function tenDay(f, periods, spcDays) {
   const d = f.daily;
   const lows = d.temperature_2m_min.map(tempVal);
   const highs = d.temperature_2m_max.map(tempVal);
-  const lo = Math.min(...lows);
-  const hi = Math.max(...highs);
+  // The last day can come back without values; null would count as 0 in Math.min.
+  const known = (list) => list.filter((v) => v !== null && Number.isFinite(v));
+  const lo = Math.min(...known(lows), ...known(highs));
+  const hi = Math.max(...known(highs), ...known(lows));
   const span = Math.max(1, hi - lo);
   const today = wallNow().toISOString().slice(0, 10);
 
   const rows = d.time.map((dateStr, i) => {
     const date = wall(dateStr);
     const name = dateStr === today ? 'Today' : dayShort(date);
-    const left = ((lows[i] - lo) / span) * 100;
-    const width = Math.max(4, ((highs[i] - lows[i]) / span) * 100);
+    const hasRange = lows[i] !== null && highs[i] !== null;
+    const left = hasRange ? ((lows[i] - lo) / span) * 100 : 0;
+    const width = hasRange ? Math.max(4, ((highs[i] - lows[i]) / span) * 100) : 0;
     const grad = `linear-gradient(90deg, ${tempColor(d.temperature_2m_min[i])}, ${tempColor(d.temperature_2m_max[i])})`;
     const pop = d.precipitation_probability_max[i];
     const details = el('div', { class: 'day-detail', hidden: true });

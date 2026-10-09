@@ -6,7 +6,7 @@ as a query parameter, since an image tag can't send headers. The Host header
 must be the loopback address, which defeats DNS rebinding, and requests that
 carry an Origin header must come from this server's own origin. Every
 response carries a Content-Security-Policy that limits the page to its own
-scripts and the four map and radar hosts.
+scripts and the map and radar tile hosts.
 """
 
 import json
@@ -58,6 +58,7 @@ SECURITY_HEADERS = {
     "Cross-Origin-Opener-Policy": "same-origin",
 }
 TOKEN_IN_URL = re.compile(r"([?&]t=)[^&\s]+")
+MAX_BODY = 256_000
 
 mimetypes.add_type("application/javascript", ".js")
 mimetypes.add_type("text/css", ".css")
@@ -125,16 +126,26 @@ class Handler(BaseHTTPRequestHandler):
         port = self.server.server_address[1]
         return origin in (f"http://127.0.0.1:{port}", f"http://localhost:{port}")
 
-    def _body_json(self):
+    def _read_body(self):
+        """Read the request body up front, before any check can turn the request
+        away. On a kept-alive connection an unread body would otherwise be parsed
+        as the start of the next request. Returns False if it can't be read."""
+        self._body = b""
+        if self.headers.get("Transfer-Encoding"):
+            return False  # chunked bodies aren't supported; the connection closes
         try:
             length = int(self.headers.get("Content-Length") or 0)
-        except ValueError as exc:
-            raise ValueError("bad Content-Length") from exc
-        if length < 0 or length > 256_000:
-            raise ValueError("body too large")
-        raw = self.rfile.read(length) if length else b"{}"
+        except ValueError:
+            return False
+        if length < 0 or length > MAX_BODY:
+            return False
+        if length:
+            self._body = self.rfile.read(length)
+        return True
+
+    def _body_json(self):
         try:
-            return json.loads(raw or b"{}")
+            return json.loads(self._body or b"{}")
         except ValueError as exc:
             raise ValueError("body is not JSON") from exc
 
@@ -150,6 +161,9 @@ class Handler(BaseHTTPRequestHandler):
         self._dispatch("POST")
 
     def _dispatch(self, method):
+        if method == "POST" and not self._read_body():
+            self.close_connection = True
+            return self._error(413, "body missing a length or too large")
         if not self._host_ok():
             return self._error(403, "bad host")
         url = urlparse(self.path)
@@ -224,10 +238,20 @@ class Handler(BaseHTTPRequestHandler):
 
     def api_alerts(self, qs):
         lat, lon = _float(qs, "lat", -90, 90), _float(qs, "lon", -180, 180)
-        self._json({"alerts": sources.nws_alerts(lat, lon)})
+        self._json({"alerts": sources.nws_alerts(lat, lon), "mcds": sources.mcds_here(lat, lon)})
 
     def api_discussion(self, qs):
-        self._json({"discussion": sources.nws_discussion(_str(qs, "office", ""))})
+        product = _str(qs, "product", "AFD").upper()
+        self._json({"discussion": sources.nws_discussion(_str(qs, "office", ""), product)})
+
+    def api_mcd(self, qs):
+        lat = _float(qs, "lat", -90, 90) if "lat" in qs else None
+        lon = _float(qs, "lon", -180, 180) if "lon" in qs else None
+        self._json(sources.spc_mcds(lat, lon))
+
+    def api_reports(self, qs):
+        hours = int(_float(qs, "hours", 1, 48))
+        self._json(sources.storm_reports(hours))
 
     def api_spc(self, qs):
         day = int(_float(qs, "day", 1, 8))
@@ -285,6 +309,8 @@ class Handler(BaseHTTPRequestHandler):
         ("GET", "/api/discussion"): api_discussion,
         ("GET", "/api/spc"): api_spc,
         ("GET", "/api/spc/point"): api_spc_point,
+        ("GET", "/api/spc/mcd"): api_mcd,
+        ("GET", "/api/reports"): api_reports,
         ("GET", "/api/wwa"): api_wwa,
         ("GET", "/api/radar/sites"): api_radar_sites,
         ("GET", "/api/radar/frames"): api_radar_frames,

@@ -1,8 +1,9 @@
-// Active alerts for the selected place, and the NWS Area Forecast Discussion.
+// Active alerts for the selected place, SPC mesoscale discussions over it,
+// and the office's Area Forecast Discussion or Hazardous Weather Outlook.
 
-import { state, api, el, emit, openExternal } from './core.js';
+import { state, api, el, emit, openExternal, saveSettings } from './core.js';
 import { uiIcon } from './icons.js';
-import { instant, ago, eventColor } from './util.js';
+import { instant, ago, eventColor, MCD_COLOR } from './util.js';
 
 // ------------------------------------------------------------------ alerts
 
@@ -58,6 +59,20 @@ function alertWhen(a) {
   return text ? text.charAt(0).toUpperCase() + text.slice(1) : '';
 }
 
+function mcdCard(m) {
+  return el('article', { class: 'alert', style: `--hz:${MCD_COLOR}` },
+    el('div', { class: 'alert-head alert-head-static' },
+      el('span', { class: 'alert-event' }, m.name),
+      el('span', { class: 'alert-when' }, m.expires ? `Until ${instant(m.expires, true)}` : '')),
+    el('div', { class: 'alert-body' },
+      el('p', {}, 'The Storm Prediction Center is watching this area closely. '
+        + 'These discussions often come before a watch, or explain why one is not needed.'),
+      m.issued ? el('p', { class: 'muted small' }, `Issued ${instant(m.issued, true)} (${ago(m.issued)})`) : null,
+      el('div', { class: 'row gap' },
+        el('button', { class: 'btn', onclick: () => openExternal(m.link) }, 'Read it on spc.noaa.gov ', el('span', { html: uiIcon('external', 14) })),
+        m.geometry ? el('button', { class: 'btn', onclick: () => emit('focus', m.geometry) }, 'Show on radar') : null)));
+}
+
 export function renderAlerts(root) {
   root.replaceChildren(el('div', { class: 'view-head' }, el('h1', {}, 'Alerts')));
   const data = state.data;
@@ -76,19 +91,33 @@ export function renderAlerts(root) {
     return;
   }
   const alerts = data.alerts || [];
-  if (!alerts.length) {
+  const mcds = data.mcds || [];
+  if (!alerts.length && !mcds.length) {
     root.append(el('div', { class: 'empty' },
       el('h2', {}, 'No active alerts'),
       el('p', {}, `Nothing in effect for ${state.loc.name}.`)));
     return;
   }
   if (alerts.length === 1) open.add(alerts[0].id);
-  root.append(el('div', { class: 'alerts' }, ...alerts.map(alertCard)));
+  if (alerts.length) root.append(el('div', { class: 'alerts' }, ...alerts.map(alertCard)));
+  if (mcds.length) {
+    root.append(el('h2', { class: 'section-head' }, 'From the Storm Prediction Center'),
+      el('div', { class: 'alerts' }, ...mcds.map(mcdCard)));
+  }
 }
 
 // ------------------------------------------------------------------ discussion
 
-let afd = { office: null, at: 0, data: null, error: null };
+// One entry per office and product, so flipping between the two tabs doesn't refetch.
+const texts = new Map();
+
+const PRODUCTS = {
+  afd: { code: 'AFD', title: 'Forecast discussion', none: 'The NWS did not return one.' },
+  hwo: {
+    code: 'HWO', title: 'Hazardous weather outlook',
+    none: 'This office has no current Hazardous Weather Outlook. Some only issue one when there is something to say.',
+  },
+};
 
 function titleCase(text) {
   // ".SHORT TERM /THROUGH TONIGHT/" reads better as "Short term (through tonight)".
@@ -141,8 +170,21 @@ function chunkNode(chunk) {
   return el('p', {}, lines.map((l) => l.trim()).join(' '));
 }
 
+function discussionHead(root, which) {
+  const tabs = el('div', { class: 'seg', role: 'group', 'aria-label': 'Product' },
+    ...Object.entries(PRODUCTS).map(([key, p]) => el('button', {
+      'aria-pressed': String(key === which),
+      onclick: () => { if (key !== which) { saveSettings({ discussion_product: key }); renderDiscussion(root); } },
+    }, key === 'afd' ? 'Discussion' : 'Hazards')));
+  const head = el('div', { class: 'view-head' }, el('div', { class: 'row', style: 'gap:16px;flex-wrap:wrap' }, el('h1', {}, PRODUCTS[which].title), tabs));
+  root.replaceChildren(head);
+  return head;
+}
+
 export async function renderDiscussion(root) {
-  root.replaceChildren(el('div', { class: 'view-head' }, el('h1', {}, 'Forecast discussion')));
+  const which = PRODUCTS[state.settings.discussion_product] ? state.settings.discussion_product : 'afd';
+  const product = PRODUCTS[which];
+  discussionHead(root, which);
   const data = state.data;
   if (!state.loc) {
     root.append(el('div', { class: 'empty' }, el('h2', {}, 'Pick a location')));
@@ -159,31 +201,36 @@ export async function renderDiscussion(root) {
     return;
   }
   const office = data.nws.office;
-  if (afd.office !== office || Date.now() - afd.at > 10 * 60 * 1000) {
+  const key = `${office}:${product.code}`;
+  let entry = texts.get(key);
+  if (!entry || Date.now() - entry.at > 10 * 60 * 1000) {
     root.append(el('div', { class: 'empty' }, el('p', {}, 'Loading')));
     try {
-      const res = await api('/api/discussion', { office });
-      afd = { office, at: Date.now(), data: res.discussion, error: null };
+      const res = await api('/api/discussion', { office, product: product.code });
+      entry = { at: Date.now(), data: res.discussion, error: null };
     } catch (err) {
-      afd = { office, at: 0, data: null, error: err.message };
+      entry = { at: 0, data: null, error: err.message };
     }
-    if (state.view !== 'discussion') return;
-    root.replaceChildren(el('div', { class: 'view-head' }, el('h1', {}, 'Forecast discussion')));
+    texts.set(key, entry);
+    // The view, the place or the tab may have changed while this loaded.
+    const nowWhich = state.settings.discussion_product;
+    if (state.view !== 'discussion' || !state.data || !state.data.nws || state.data.nws.office !== office || (nowWhich || 'afd') !== which) return;
+    discussionHead(root, which);
   }
-  if (!afd.data) {
-    root.append(el('div', { class: 'empty' }, el('h2', {}, 'Discussion unavailable'), el('p', {}, afd.error || 'The NWS did not return one.')));
+  if (!entry.data) {
+    root.append(el('div', { class: 'empty' }, el('h2', {}, `${product.title} unavailable`), el('p', {}, entry.error || product.none)));
     return;
   }
+  const doc = entry.data;
 
-  const head = root.querySelector('.view-head');
-  head.append(el('button', { class: 'link', onclick: () => openExternal(afd.data.link) },
+  root.querySelector('.view-head').append(el('button', { class: 'link', onclick: () => openExternal(doc.link) },
     'Open on weather.gov ', el('span', { html: uiIcon('external', 14) })));
 
-  root.append(el('p', { class: 'muted' }, `NWS ${office}, issued ${instant(afd.data.issued, true)} (${ago(afd.data.issued)})`));
-  const blocks = afdBlocks(afd.data.text);
+  root.append(el('p', { class: 'muted' }, `NWS ${office}, issued ${instant(doc.issued, true)} (${ago(doc.issued)})`));
+  const blocks = afdBlocks(doc.text);
   const article = el('article', { class: 'afd' });
   if (!blocks.length) {
-    article.append(el('pre', { class: 'afd-pre' }, afd.data.text || ''));
+    article.append(el('pre', { class: 'afd-pre' }, doc.text || ''));
   }
   for (const b of blocks) {
     if (!b.chunks.length) continue;

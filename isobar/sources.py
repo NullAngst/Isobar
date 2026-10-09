@@ -26,6 +26,10 @@ WWA_QUERY = (
     "WWA/watch_warn_adv/MapServer/0/query"
 )
 NOMINATIM = "https://nominatim.openstreetmap.org/reverse"
+MCD_QUERY = (
+    "https://mapservices.weather.noaa.gov/vector/rest/services/"
+    "outlooks/spc_mesoscale_discussion/MapServer/0/query"
+)
 
 _pool = ThreadPoolExecutor(max_workers=12, thread_name_prefix="isobar-fetch")
 
@@ -64,9 +68,12 @@ def geocode(query):
     data = get_json(OPEN_METEO_GEO, params, ttl=86400) or {}
     out = []
     for item in data.get("results") or []:
+        if item.get("latitude") is None or item.get("longitude") is None:
+            continue
         region = ", ".join(p for p in (item.get("admin1"), item.get("country_code")) if p)
+        where = item.get("admin1") or item.get("country")
         out.append({
-            "name": f"{item.get('name')}, {item.get('admin1') or item.get('country')}",
+            "name": f"{item.get('name')}, {where}" if where else str(item.get("name") or ""),
             "detail": region,
             "lat": item.get("latitude"),
             "lon": item.get("longitude"),
@@ -216,6 +223,11 @@ def nws_alerts(lat, lon):
             "area": p.get("areaDesc"),
             "description": p.get("description"),
             "instruction": p.get("instruction"),
+            "type": p.get("messageType"),
+            # Earlier versions of this same alert. Updates get a new id, so the
+            # notifier uses these to tell an update from a new alert.
+            "references": [r.get("identifier") for r in (p.get("references") or [])[:20]
+                           if isinstance(r, dict) and r.get("identifier")],
             "geometry": feat.get("geometry"),
         })
     out.sort(key=lambda a: (SEVERITY_RANK.get(a["severity"], 5), a["event"] or ""))
@@ -259,10 +271,17 @@ def nws_observation(stations_url):
     return None
 
 
-def nws_discussion(office):
+# Text products the Discussion view can show. HWO is the Hazardous Weather
+# Outlook, the office's plain summary of what could go wrong over the week.
+TEXT_PRODUCTS = {"AFD", "HWO"}
+
+
+def nws_discussion(office, product="AFD"):
     if not office or not re.fullmatch(r"[A-Z]{3}", office):
         return None
-    listing = get_json(f"{NWS}/products/types/AFD/locations/{office}", ttl=600, headers=NWS_HEADERS) or {}
+    if product not in TEXT_PRODUCTS:
+        raise ValueError("unknown product")
+    listing = get_json(f"{NWS}/products/types/{product}/locations/{office}", ttl=600, headers=NWS_HEADERS) or {}
     items = listing.get("@graph") or listing.get("features") or []
     if not items:
         return None
@@ -273,12 +292,13 @@ def nws_discussion(office):
     if url is None:
         return None
     # A product never changes once issued, so it can be cached for a long time.
-    product = get_json(url, ttl=86400, headers=NWS_HEADERS) or {}
+    data = get_json(url, ttl=86400, headers=NWS_HEADERS) or {}
     return {
         "office": office,
-        "issued": product.get("issuanceTime"),
-        "text": product.get("productText"),
-        "link": f"https://forecast.weather.gov/product.php?site={office}&issuedby={office}&product=AFD",
+        "product": product,
+        "issued": data.get("issuanceTime"),
+        "text": data.get("productText"),
+        "link": f"https://forecast.weather.gov/product.php?site={office}&issuedby={office}&product={product}",
     }
 
 
@@ -296,11 +316,12 @@ def weather_bundle(lat, lon):
     except Exception as exc:  # noqa: BLE001
         errors.append(f"NWS point: {exc}")
 
-    f_periods = f_alerts = f_obs = None
+    f_periods = f_alerts = f_obs = f_mcd = None
     if point:
         f_periods = _pool.submit(nws_periods, point["forecast"])
         f_alerts = _pool.submit(nws_alerts, lat, lon)
         f_obs = _pool.submit(nws_observation, point["stations"])
+        f_mcd = _pool.submit(mcds_here, lat, lon)
 
     def take(future, label, default=None):
         if future is None:
@@ -318,6 +339,7 @@ def weather_bundle(lat, lon):
         "periods": take(f_periods, "NWS forecast", []),
         "alerts": take(f_alerts, "Alerts", []),
         "obs": take(f_obs, "Observation"),
+        "mcds": take(f_mcd, "Mesoscale discussions", []),
         "errors": errors,
     }
 
@@ -427,11 +449,23 @@ def _prob_at(lat, lon, outlook):
             continue
         if value > best and geo.point_in_geometry(lat, lon, f["geometry"]):
             best = value
+    # Intensity areas nest (SIGN, or CIG1 inside CIG2 inside CIG3), so keep
+    # the strongest one the point falls in, not whichever came last.
     sig = None
     for f in outlook["intensity"]:
-        if geo.point_in_geometry(lat, lon, f["geometry"]):
-            sig = f["properties"]["label"]
+        label = f["properties"]["label"]
+        if geo.point_in_geometry(lat, lon, f["geometry"]) and _intensity_rank(label) > _intensity_rank(sig):
+            sig = label
     return {"pct": round(best * 100), "intensity": sig}
+
+
+def _intensity_rank(label):
+    if not label:
+        return -1
+    up = label.upper()
+    if up.startswith("CIG") and up[3:].isdigit():
+        return int(up[3:])
+    return 1  # SIGN, the older single "significant" area
 
 
 def _cat_at(lat, lon, outlook):
@@ -677,3 +711,123 @@ def model_grid(bbox, nx, ny):
         gust.append(cur.get("wind_gusts_10m"))
     time = ((data or [{}])[0].get("current") or {}).get("time")
     return {"lats": lats, "lons": lons, "temp": temp, "speed": speed, "dir": direction, "gust": gust, "time": time}
+
+
+# ---------------------------------------------------------------- SPC mesoscale discussions
+
+_MCD_LINK = re.compile(r"https?://www\.spc\.noaa\.gov/products/md/[A-Za-z0-9/_.-]+\.html")
+_MCD_TILL = re.compile(r"till\s+(\d{2})(\d{2})\s*UTC", re.IGNORECASE)
+
+
+def _mcd_number(name):
+    match = re.search(r"(\d{1,4})", str(name or ""))
+    return int(match.group(1)) if match else None
+
+
+def _mcd_expires(info, issued_ms):
+    """The service says "MD 2348 Active Till 1745 UTC". Turn that into a time,
+    on the issue date, or the next day if the hour has already wrapped past midnight."""
+    match = _MCD_TILL.search(str(info or ""))
+    if not match or not isinstance(issued_ms, (int, float)):
+        return None
+    issued = datetime.fromtimestamp(issued_ms / 1000, tz=timezone.utc)
+    hour, minute = int(match.group(1)), int(match.group(2))
+    if hour > 23 or minute > 59:
+        return None
+    until = issued.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if until < issued - timedelta(hours=1):
+        until += timedelta(days=1)
+    return until.isoformat()
+
+
+def spc_mcds(lat=None, lon=None):
+    """Active SPC mesoscale discussions as GeoJSON, from NOAA's map service.
+    With a point, each one says whether the point is inside it."""
+    data = get_json(MCD_QUERY, {
+        "where": "1=1",
+        "outFields": "name,popupinfo,folderpath,idp_filedate",
+        "f": "geojson",
+        "outSR": 4326,
+        "returnGeometry": "true",
+        "geometryPrecision": 3,
+    }, ttl=120) or {}
+    out = []
+    for feat in data.get("features") or []:
+        geometry = feat.get("geometry")
+        p = feat.get("properties") or {}
+        name = str(p.get("name") or "").strip()
+        # With nothing active the service returns one empty "NoArea" placeholder.
+        if not geometry or not name or name.lower() == "noarea":
+            continue
+        number = _mcd_number(name)
+        link = _MCD_LINK.match(str(p.get("popupinfo") or "").strip())
+        if link:
+            link = link.group(0).replace("http://", "https://", 1)
+        elif number:
+            link = f"https://www.spc.noaa.gov/products/md/md{number:04d}.html"
+        else:
+            link = "https://www.spc.noaa.gov/products/md/"
+        out.append({
+            "type": "Feature",
+            "geometry": geometry,
+            "properties": {
+                "name": f"Mesoscale discussion {number}" if number else name,
+                "number": number,
+                "issued": _epoch_to_iso(p.get("idp_filedate")),
+                "expires": _mcd_expires(p.get("folderpath"), p.get("idp_filedate")),
+                "link": link,
+                "here": bool(lat is not None and lon is not None and geo.point_in_geometry(lat, lon, geometry)),
+            },
+        })
+    return {"type": "FeatureCollection", "features": out}
+
+
+def mcds_here(lat, lon):
+    """Properties of the active mesoscale discussions covering a point. A failing
+    map service means an empty list here, never a failed alerts request."""
+    try:
+        return [{**f["properties"], "geometry": f["geometry"]}
+                for f in spc_mcds(lat, lon)["features"] if f["properties"]["here"]]
+    except FetchError:
+        return []
+
+
+# ---------------------------------------------------------------- local storm reports
+
+REPORT_HOURS = (3, 6, 12, 24, 48)
+MAX_REPORTS = 5000
+
+
+def storm_reports(hours):
+    """Local storm reports (tornadoes, hail, wind damage, flooding and so on)
+    from the last few hours, nationwide, from IEM. The window snaps up to a
+    fixed set so every caller shares the same few cached answers."""
+    hours = next((h for h in REPORT_HOURS if h >= int(hours)), REPORT_HOURS[-1])
+    data = get_json(f"{IEM}/geojson/lsr.geojson", {"hours": hours}, ttl=300) or {}
+    out = []
+    for feat in (data.get("features") or [])[:MAX_REPORTS]:
+        p = feat.get("properties") or {}
+        coords = (feat.get("geometry") or {}).get("coordinates") or []
+        if len(coords) < 2:
+            continue
+        try:
+            lon, lat = float(coords[0]), float(coords[1])
+        except (TypeError, ValueError):
+            continue
+        out.append({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [lon, lat]},
+            "properties": {
+                "type": str(p.get("type") or "")[:2],
+                "text": str(p.get("typetext") or "")[:40],
+                "magnitude": str(p.get("magnitude") or "")[:12],
+                "unit": str(p.get("unit") or "")[:16],
+                "city": str(p.get("city") or "")[:60],
+                "county": str(p.get("county") or "")[:40],
+                "state": str(p.get("state") or "")[:2],
+                "source": str(p.get("source") or "")[:40],
+                "remark": str(p.get("remark") or "")[:400],
+                "valid": p.get("valid"),
+            },
+        })
+    return {"hours": hours, "type": "FeatureCollection", "features": out}

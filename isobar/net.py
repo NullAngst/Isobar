@@ -23,7 +23,6 @@ import email.utils
 import hashlib
 import json
 import logging
-import os
 import threading
 import time
 from collections import OrderedDict
@@ -286,7 +285,7 @@ def _fetch(url, params, headers, entry, limit, allow_redirects=True):
         if status == 304 and entry is not None:
             _record_success(host)
             return 304, None, resp
-        if status in (429, 502, 503, 504) or status >= 500:
+        if status == 429 or status >= 500:
             _record_failure(host, resp)
             raise FetchError(f"{url}: HTTP {status}", status)
         if status != 200:

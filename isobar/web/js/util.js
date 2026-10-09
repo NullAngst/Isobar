@@ -275,6 +275,9 @@ export function eventColor(event) {
   return SIG_FALLBACK.S;
 }
 
+// SPC mesoscale discussions: one color everywhere they show up.
+export const MCD_COLOR = '#3b82f6';
+
 // SPC categorical colors, used when the GeoJSON leaves them out.
 export const SPC_COLORS = {
   TSTM: '#c1e9c1', MRGL: '#66a366', SLGT: '#f6f67f', ENH: '#e6c27f', MDT: '#e67f7f', HIGH: '#ff7fff',

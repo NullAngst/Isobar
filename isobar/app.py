@@ -14,8 +14,9 @@ import time
 import webbrowser
 
 from . import APP_NAME, __version__, settings, sources
-from .paths import cache_dir, icon_path
 from .net import prune_disk
+from .notify import AlertWatcher
+from .paths import cache_dir, icon_path
 from .server import Server
 
 log = logging.getLogger("isobar")
@@ -41,13 +42,6 @@ def run_browser(server):
             time.sleep(3600)
     except KeyboardInterrupt:
         pass
-
-
-def _is_warning_worthy(alert, mode):
-    if mode == "all":
-        return True
-    event = (alert.get("event") or "").lower()
-    return event.endswith("warning") or alert.get("severity") in ("Extreme",)
 
 
 def run_qt(server, args):
@@ -183,7 +177,7 @@ def run_qt(server, args):
         found = Signal(str, str)
 
     notifier = Notifier()
-    seen = set()
+    watcher = AlertWatcher()
     busy = threading.Lock()
 
     def show_alert(title, body):
@@ -203,12 +197,10 @@ def run_qt(server, args):
             mode = prefs.get("notify", "warnings")
             if mode == "off" or not loc:
                 return
-            for alert in sources.nws_alerts(loc["lat"], loc["lon"]):
-                if alert["id"] in seen:
-                    continue
-                seen.add(alert["id"])
-                if _is_warning_worthy(alert, mode):
-                    notifier.found.emit(alert["event"] or "Weather alert", alert.get("headline") or loc.get("name", ""))
+            alerts = sources.nws_alerts(loc["lat"], loc["lon"])
+            mcds = sources.mcds_here(loc["lat"], loc["lon"]) if mode in ("watches", "all") else []
+            for title, body in watcher.check(alerts, mcds, mode, loc.get("name", "")):
+                notifier.found.emit(title, body)
         except Exception as exc:  # noqa: BLE001
             log.info("alert poll failed: %s", exc)
         finally:

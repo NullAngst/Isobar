@@ -54,7 +54,7 @@ function buildRail() {
   const top = $('rail-views');
   for (const v of VIEWS) {
     top.append(el('button', {
-      class: 'rail-btn', dataset: { view: v.id }, 'aria-label': v.name, title: v.name,
+      class: 'rail-btn', dataset: { view: v.id }, 'aria-label': v.name, title: `${v.name} (${VIEWS.indexOf(v) + 1})`,
       onclick: () => go(v.id),
     }, el('span', { class: 'rail-ic', html: uiIcon(v.icon, 22) }), el('span', { class: 'rail-label' }, v.name),
     v.id === 'alerts' ? el('span', { class: 'badge', id: 'alert-badge', hidden: true }) : null));
@@ -157,12 +157,18 @@ async function loadSpc(seq) {
 
 async function refreshAlerts() {
   if (!state.loc || !state.data || !state.data.nws) return;
+  // A place change while this is in flight must not paint the old place's alerts onto the new one.
+  const seq = loadSeq;
+  const data = state.data;
   try {
     const res = await api('/api/alerts', { lat: state.loc.lat, lon: state.loc.lon });
-    const before = (state.data.alerts || []).map((a) => a.id).join();
-    state.data.alerts = res.alerts;
+    if (seq !== loadSeq || data !== state.data) return;
+    const key = (d) => [...(d.alerts || []).map((a) => a.id), ...(d.mcds || []).map((m) => m.number)].join();
+    const before = key(data);
+    data.alerts = res.alerts || [];
+    data.mcds = res.mcds || [];
     updateBadge();
-    if (before !== res.alerts.map((a) => a.id).join() && ['now', 'alerts'].includes(state.view)) render();
+    if (before !== key(data) && ['now', 'alerts'].includes(state.view)) render();
   } catch (err) {
     console.warn('alerts', err);
   }
@@ -171,8 +177,9 @@ async function refreshAlerts() {
 function updateBadge() {
   const badge = $('alert-badge');
   const alerts = (state.data && state.data.alerts) || [];
-  badge.hidden = !alerts.length;
-  badge.textContent = String(alerts.length);
+  const count = alerts.length + ((state.data && state.data.mcds) || []).length;
+  badge.hidden = !count;
+  badge.textContent = String(count);
   badge.classList.toggle('badge-warn', alerts.some((a) => /warning$/i.test(a.event || '')));
 }
 
@@ -277,9 +284,17 @@ function bindSearch() {
     }
   });
   document.addEventListener('keydown', (e) => {
-    if (e.key === '/' && !e.target.closest('input, select, textarea')) {
+    if (e.target.closest('input, select, textarea') || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === '/') {
       e.preventDefault();
       input.focus();
+      return;
+    }
+    // 1 to 6 jump straight to a view, in rail order.
+    const n = Number(e.key);
+    if (Number.isInteger(n) && n >= 1 && n <= VIEWS.length && $('settings').hidden) {
+      e.preventDefault();
+      go(VIEWS[n - 1].id);
     }
   });
   $('place').addEventListener('click', () => input.focus());
@@ -403,8 +418,10 @@ function renderSettings() {
     select('Loop speed', 'radar_speed_ms', [[700, 'Slow'], [450, 'Normal'], [250, 'Fast']], true),
     ...(platform === 'android' ? [] : [
       el('h3', {}, 'Alerts'),
-      seg('Notify me', 'notify', [['off', 'Off'], ['warnings', 'Warnings'], ['all', 'All alerts']]),
-      el('p', { class: 'muted small' }, 'Desktop notifications for your current place, checked every 2 minutes while Isobar runs.'),
+      seg('Notify me', 'notify', [['off', 'Off'], ['warnings', 'Warnings'], ['watches', 'Watches too'], ['all', 'All alerts']]),
+      el('p', { class: 'muted small' },
+        'Desktop notifications for your current place, checked every 2 minutes while Isobar runs. ',
+        '"Watches too" adds watches and SPC mesoscale discussions. Updates to an alert you already got stay quiet.'),
       tray,
     ]),
     el('h3', {}, 'Saved places'),

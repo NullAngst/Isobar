@@ -1,7 +1,11 @@
 # PyInstaller spec for Isobar. Build with: pyinstaller --noconfirm --clean isobar.spec
 # -*- mode: python ; coding: utf-8 -*-
 
+import re
 import sys
+
+# The version lives in one place, isobar/__init__.py, and the macOS bundle reads it from there.
+VERSION = re.search(r'__version__\s*=\s*"([^"]+)"', open("isobar/__init__.py", encoding="utf-8").read()).group(1)
 
 if sys.platform == "win32":
     ICON = "assets/icon.ico"
@@ -31,7 +35,6 @@ a = Analysis(
 # with widgets, so the 3D, QML, multimedia and similar modules are dropped.
 # This cuts a few hundred MB. If a build ever fails to start with a missing
 # Qt library, remove its prefix from DROP_MODULES.
-import re
 
 DROP_MODULES = (
     "3D", "Charts", "DataVisualization", "Graphs", "Labs", "Location", "Multimedia",
@@ -94,7 +97,7 @@ if sys.platform == "darwin":
         info_plist={
             "CFBundleName": "Isobar",
             "CFBundleDisplayName": "Isobar",
-            "CFBundleShortVersionString": "1.3.1",
+            "CFBundleShortVersionString": VERSION,
             "NSHighResolutionCapable": True,
             "LSApplicationCategoryType": "public.app-category.weather",
         },
