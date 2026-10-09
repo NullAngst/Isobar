@@ -5,12 +5,33 @@ on:
     types: [published]
   workflow_dispatch:
 
+# Every job reads only. The release job at the bottom is the one place that
+# can write, and it only uploads files the other jobs already built.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the one dependency the tests need
+        run: python -m pip install requests
+
+      - name: Run the tests
+        run: python -m unittest discover -s tests -t . -v
+
   build:
     name: Build ${{ matrix.name }}
+    needs: test
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -59,6 +80,15 @@ jobs:
         if: runner.os == 'Linux'
         run: tar -C dist -czf "Isobar-${{ github.ref_name }}-${{ matrix.name }}.tar.gz" Isobar
 
+      - name: Build the AppImage (Linux)
+        if: runner.os == 'Linux'
+        # Called through bash, since a web UI upload drops the execute bit.
+        run: bash packaging/appimage/build-appimage.sh "${{ github.ref_name }}"
+
+      - name: Smoke test the AppImage (Linux)
+        if: runner.os == 'Linux'
+        run: APPIMAGE_EXTRACT_AND_RUN=1 ./Isobar-*-linux-x86_64.AppImage --version
+
       - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -75,18 +105,13 @@ jobs:
           path: |
             Isobar-*.tar.gz
             Isobar-*.zip
+            Isobar-*.AppImage
+            Isobar-*.AppImage.zsync
           if-no-files-found: error
-
-      - name: Attach to the release
-        if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            Isobar-*.tar.gz
-            Isobar-*.zip
 
   android:
     name: Build android-apk
+    needs: test
     runs-on: ubuntu-latest
 
     steps:
@@ -148,8 +173,24 @@ jobs:
           path: Isobar-*-android.apk
           if-no-files-found: error
 
-      - name: Attach to the release
-        if: github.event_name == 'release'
+  release:
+    name: Attach to the release
+    needs: [build, android]
+    # Runs when a release is published, even if one build failed (a missing
+    # Android signing key, say), so whatever did build still gets attached.
+    if: github.event_name == 'release' && !cancelled()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Collect the builds
+        uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+
+      - name: Attach them
         uses: softprops/action-gh-release@v2
         with:
-          files: Isobar-*-android.apk
+          files: out/*
+          fail_on_unmatched_files: true
