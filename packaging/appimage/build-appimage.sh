@@ -2,7 +2,7 @@
 # Wraps the PyInstaller build in dist/Isobar into a single-file AppImage.
 #
 # Run it from anywhere after `pyinstaller --noconfirm --clean isobar.spec`:
-#   packaging/appimage/build-appimage.sh v1.4.0
+#   packaging/appimage/build-appimage.sh v1.5.0
 # The argument is only the label in the file name. The result lands in the
 # repo root as Isobar-<label>-linux-x86_64.AppImage, plus a .zsync file that
 # lets AppImageUpdate (and Gear Lever and the like) fetch just what changed.
@@ -12,56 +12,67 @@
 
 set -euo pipefail
 
-LABEL="${1:-}"
-if [ -z "$LABEL" ]; then
-  echo "usage: $0 <version label, like v1.4.0>" >&2
-  exit 2
+die() {
+  printf '%s\n' "$*" >&2
+  exit 1
+}
+
+label="${1:-}"
+[ -n "$label" ] || die "usage: $0 <version label, like v1.5.0>"
+
+missing=()
+for tool in cp install ln mkdir rm chmod; do
+  command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
+done
+if [ -z "${APPIMAGETOOL:-}" ]; then
+  command -v curl >/dev/null 2>&1 || missing+=("curl")
+fi
+if [ "${#missing[@]}" -gt 0 ]; then
+  die "missing commands: ${missing[*]}"
 fi
 
 # A branch name like feature/x would put a slash in the file name.
-LABEL="${LABEL//\//-}"
+label="${label//\//-}"
 
-HERE="$(cd "$(dirname "$0")" && pwd)"
-ROOT="$(cd "$HERE/../.." && pwd)"
-DIST="$ROOT/dist/Isobar"
-WORK="$ROOT/build/appimage"
-APPDIR="$WORK/Isobar.AppDir"
-NAME="Isobar-$LABEL-linux-x86_64.AppImage"
-ID="io.github.nullangst.isobar"
+here="$(cd "$(dirname -- "$0")" && pwd)" || exit 1
+root="$(cd "$here/../.." && pwd)" || exit 1
+dist="$root/dist/Isobar"
+work="$root/build/appimage"
+appdir="$work/Isobar.AppDir"
+name="Isobar-$label-linux-x86_64.AppImage"
+id="io.github.nullangst.isobar"
 
-if [ ! -x "$DIST/Isobar" ]; then
-  echo "No PyInstaller build at $DIST. Run: pyinstaller --noconfirm --clean isobar.spec" >&2
-  exit 1
-fi
+[ -x "$dist/Isobar" ] || die "No PyInstaller build at $dist. Run: pyinstaller --noconfirm --clean isobar.spec"
 
-rm -rf "$APPDIR"
-mkdir -p "$APPDIR/usr/lib" "$APPDIR/usr/share/applications" \
-  "$APPDIR/usr/share/icons/hicolor/256x256/apps" "$APPDIR/usr/share/icons/hicolor/1024x1024/apps"
+rm -rf -- "$appdir"
+mkdir -p -- "$appdir/usr/lib" "$appdir/usr/share/applications" \
+  "$appdir/usr/share/icons/hicolor/256x256/apps" "$appdir/usr/share/icons/hicolor/1024x1024/apps"
 
 # The program, its _internal folder and everything in it, kept together.
-cp -a "$DIST" "$APPDIR/usr/lib/isobar"
+cp -R -- "$dist" "$appdir/usr/lib/isobar"
 
-install -m 755 "$HERE/AppRun" "$APPDIR/AppRun"
-install -m 644 "$HERE/$ID.desktop" "$APPDIR/$ID.desktop"
-install -m 644 "$HERE/$ID.desktop" "$APPDIR/usr/share/applications/$ID.desktop"
-install -m 644 "$ROOT/isobar/web/icon.png" "$APPDIR/usr/share/icons/hicolor/256x256/apps/$ID.png"
-install -m 644 "$ROOT/assets/icon.png" "$APPDIR/usr/share/icons/hicolor/1024x1024/apps/$ID.png"
-install -m 644 "$ROOT/isobar/web/icon.png" "$APPDIR/$ID.png"
-ln -sf "$ID.png" "$APPDIR/.DirIcon"
+install -m 755 -- "$here/AppRun" "$appdir/AppRun"
+install -m 644 -- "$here/$id.desktop" "$appdir/$id.desktop"
+install -m 644 -- "$here/$id.desktop" "$appdir/usr/share/applications/$id.desktop"
+install -m 644 -- "$root/isobar/web/icon.png" "$appdir/usr/share/icons/hicolor/256x256/apps/$id.png"
+install -m 644 -- "$root/assets/icon.png" "$appdir/usr/share/icons/hicolor/1024x1024/apps/$id.png"
+install -m 644 -- "$root/isobar/web/icon.png" "$appdir/$id.png"
+ln -sf -- "$id.png" "$appdir/.DirIcon"
 
-TOOL="${APPIMAGETOOL:-$WORK/appimagetool}"
-if [ ! -x "$TOOL" ]; then
-  curl -fsSL -o "$TOOL" \
+tool="${APPIMAGETOOL:-$work/appimagetool}"
+if [ ! -x "$tool" ]; then
+  mkdir -p -- "$work"
+  curl -fsSL -o "$tool" \
     https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
-  chmod +x "$TOOL"
+  chmod +x -- "$tool"
 fi
 
 # Lets update tools find newer builds on the GitHub releases page.
-UPDATE="gh-releases-zsync|NullAngst|Isobar|latest|Isobar-*-linux-x86_64.AppImage.zsync"
+update="gh-releases-zsync|NullAngst|Isobar|latest|Isobar-*-linux-x86_64.AppImage.zsync"
 
 # APPIMAGE_EXTRACT_AND_RUN: build machines (and containers) often have no FUSE,
 # and appimagetool is an AppImage itself.
-cd "$ROOT"
-ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$TOOL" --no-appstream -u "$UPDATE" "$APPDIR" "$NAME"
+cd "$root" || exit 1
+ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$tool" --no-appstream -u "$update" "$appdir" "$name"
 
-echo "Built $ROOT/$NAME"
+printf 'Built %s\n' "$root/$name"

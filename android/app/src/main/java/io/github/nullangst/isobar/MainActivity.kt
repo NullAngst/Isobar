@@ -1,12 +1,22 @@
 package io.github.nullangst.isobar
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
+import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
+import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.CancellationSignal
+import android.os.Handler
+import android.os.Looper
+import android.provider.Settings
 import android.util.Log
 import android.view.RoundedCorner
 import android.view.View
@@ -19,7 +29,9 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -45,6 +57,18 @@ class MainActivity : AppCompatActivity() {
 
     // Port of Isobar's own server, once it's running. Only that origin loads in the WebView.
     private var serverPort = -1
+
+    // A view to open once the page has loaded (from a notification tap).
+    private var pendingView: String? = null
+    private var pageLoaded = false
+
+    private val notifyPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (!granted) Log.i(TAG, "notifications not allowed; alerts will only show in the app")
+    }
+
+    private val locationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) locate() else sendLocation(null, "Location permission denied")
+    }
 
     @SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -84,6 +108,8 @@ class MainActivity : AppCompatActivity() {
         web.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView, url: String?) {
                 pushCorners()
+                pageLoaded = true
+                openPendingView()
             }
 
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
@@ -115,7 +141,105 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
+        pendingView = intent?.getStringExtra(AlertWorker.EXTRA_VIEW)
         start()
+        AlertWorker.schedule(this)
+        askForNotifications()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        intent.getStringExtra(AlertWorker.EXTRA_VIEW)?.let {
+            pendingView = it
+            if (pageLoaded) openPendingView()
+        }
+    }
+
+    private fun openPendingView() {
+        val view = pendingView ?: return
+        pendingView = null
+        // Only known view names go into the script.
+        if (view !in setOf("now", "forecast", "radar", "outlooks", "alerts", "discussion")) return
+        web.evaluateJavascript("window.isobar && window.isobar.go('$view')", null)
+    }
+
+    /** Asks once, on Android 13 and later, for permission to post alert notifications. */
+    private fun askForNotifications() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return
+        val prefs = getSharedPreferences("isobar", Context.MODE_PRIVATE)
+        if (prefs.getBoolean("asked_notifications", false)) return
+        prefs.edit().putBoolean("asked_notifications", true).apply()
+        notifyPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
+    // ------------------------------------------------------------ location
+
+    private fun requestLocation() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+            locate()
+        } else {
+            locationPermission.launch(Manifest.permission.ACCESS_COARSE_LOCATION)
+        }
+    }
+
+    /** One coarse fix (about a kilometer), which is all a forecast needs. No Google services. */
+    @SuppressLint("MissingPermission")
+    private fun locate() {
+        val manager = getSystemService(LocationManager::class.java)
+        if (manager == null) {
+            sendLocation(null, "No location service on this device")
+            return
+        }
+        val provider = when {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && manager.isProviderEnabled(LocationManager.FUSED_PROVIDER) -> LocationManager.FUSED_PROVIDER
+            manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER) -> LocationManager.NETWORK_PROVIDER
+            manager.isProviderEnabled(LocationManager.PASSIVE_PROVIDER) -> LocationManager.PASSIVE_PROVIDER
+            else -> null
+        }
+        if (provider == null) {
+            sendLocation(null, "Location is turned off")
+            return
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                manager.getCurrentLocation(provider, CancellationSignal(), mainExecutor) { location ->
+                    sendLocation(location ?: manager.getLastKnownLocation(provider), "No fix")
+                }
+            } else {
+                // Every method spelled out: before Android 11 the system calls all
+                // four, and a lambda would only supply the first.
+                val listener = object : LocationListener {
+                    override fun onLocationChanged(location: Location) = sendLocation(location, null)
+                    @Deprecated("Deprecated in Java")
+                    override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+                    override fun onProviderEnabled(provider: String) {}
+                    override fun onProviderDisabled(provider: String) {}
+                }
+                @Suppress("DEPRECATION")
+                manager.requestSingleUpdate(provider, listener, Looper.getMainLooper())
+                Handler(Looper.getMainLooper()).postDelayed({
+                    // Some devices never answer requestSingleUpdate indoors.
+                    sendLocation(manager.getLastKnownLocation(provider), "No fix")
+                }, 20000)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "location failed", e)
+            sendLocation(null, "Location failed")
+        }
+    }
+
+    private fun sendLocation(location: Location?, error: String?) {
+        runOnUiThread {
+            if (!::web.isInitialized) return@runOnUiThread
+            val js = if (location != null) {
+                "window.isobar && window.isobar.onLocation(${location.latitude}, ${location.longitude}, null)"
+            } else {
+                // The message is one of the fixed strings above, never outside text.
+                "window.isobar && window.isobar.onLocation(NaN, NaN, '${error ?: "No fix"}')"
+            }
+            web.evaluateJavascript(js, null)
+        }
     }
 
     private fun start() {
@@ -201,6 +325,24 @@ class MainActivity : AppCompatActivity() {
     /** Called from main.js so the status and navigation bar areas match the app theme. */
     inner class Bridge {
         @JavascriptInterface
+        fun requestLocation() {
+            runOnUiThread { this@MainActivity.requestLocation() }
+        }
+
+        @JavascriptInterface
+        fun openNotificationSettings() {
+            runOnUiThread {
+                val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                try {
+                    startActivity(intent)
+                } catch (e: ActivityNotFoundException) {
+                    Log.w(TAG, "no notification settings screen")
+                }
+            }
+        }
+
+        @JavascriptInterface
         fun setTheme(background: String, light: Boolean) {
             runOnUiThread {
                 val color = try {
@@ -220,6 +362,8 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         web.onResume()
+        // Lets the page refresh stale data and follow the phone's location.
+        if (pageLoaded) web.evaluateJavascript("window.isobar && window.isobar.resumed && window.isobar.resumed()", null)
     }
 
     override fun onPause() {

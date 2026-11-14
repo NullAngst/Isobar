@@ -1,5 +1,11 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # Entry point of the AppImage. The PyInstaller folder sits intact under
 # usr/lib/isobar, since the program only starts next to its _internal folder.
-HERE="$(dirname "$(readlink -f "$0")")"
-exec "$HERE/usr/lib/isobar/Isobar" "$@"
+# The AppImage runtime sets APPDIR to where it mounted the image; the fallback
+# covers running an extracted AppDir by hand.
+set -euo pipefail
+here="${APPDIR:-}"
+if [ -z "$here" ]; then
+  here="$(cd "$(dirname -- "$0")" && pwd)" || exit 1
+fi
+exec "$here/usr/lib/isobar/Isobar" "$@"

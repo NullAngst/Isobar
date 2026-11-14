@@ -38,7 +38,27 @@ class Settings(unittest.TestCase):
         s = settings.save({"location": {"name": "x" * 500, "lat": "34.5", "lon": -83.3},
                            "saved": [{"lat": 91, "lon": 0}, {"lat": 1, "lon": 2}]})
         self.assertEqual(len(s["location"]["name"]), 120)
-        self.assertEqual(s["saved"], [{"name": "1.000, 2.000", "lat": 1.0, "lon": 2.0}])
+        self.assertEqual(s["saved"], [{"name": "1.000, 2.000", "lat": 1.0, "lon": 2.0, "notify": False}])
+        self.assertNotIn("notify", s["location"])
+
+    def test_saved_place_keeps_its_bell(self):
+        s = settings.save({"saved": [{"name": "A", "lat": 1, "lon": 2, "notify": True},
+                                     {"name": "B", "lat": 3, "lon": 4, "notify": "yes"}]})
+        self.assertEqual([p["notify"] for p in s["saved"]], [True, False])
+
+    def test_new_themes_and_quiet_hours(self):
+        s = settings.save({"theme": "verdigris", "quiet_start": 22.4, "quiet_end": 99})
+        self.assertEqual(s["theme"], "verdigris")
+        self.assertEqual(s["quiet_start"], 22)
+        self.assertEqual(s["quiet_end"], 23)
+        for theme in ("kawaii-light", "kawaii-dark"):
+            self.assertEqual(settings.save({"theme": theme})["theme"], theme)
+
+    def test_new_layers_default(self):
+        layers = settings.load()["radar_layers"]
+        self.assertFalse(layers["attrs"])
+        self.assertTrue(layers["tropical"])
+        self.assertFalse(layers["labels"])
 
     def test_nested_layers_merge(self):
         settings.save({"radar_layers": {"counties": True}})

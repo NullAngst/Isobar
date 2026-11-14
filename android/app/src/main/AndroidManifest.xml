@@ -2,6 +2,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Alert notifications (asked for at first launch on Android 13 and later). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- "Use my location" and "Follow my location". Coarse only: a forecast
+         needs about a kilometer, and the app never asks for background location. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
     <!-- PyApplication starts Python once per process, before any activity runs. -->
     <application

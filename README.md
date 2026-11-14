@@ -2,24 +2,28 @@
 
 Isobar is a weather and radar app for Linux, Windows, macOS and Android, for people who want the forecast, live radar, warnings and SPC outlooks in one clean window, without paying for RadarOmega or digging through the NWS website.
 
-Type in a city, ZIP code or `lat, lon` and you get current conditions, an hourly chart, a 10-day forecast, active alerts, the local forecast discussion and hazardous weather outlook, a radar map with storm reports, and the Storm Prediction Center outlooks for days 1 through 8.
+Type in a city, ZIP code or `lat, lon` (or tap "Use my location" on Android) and you get current conditions, an hourly chart, a 10-day forecast, active alerts with their hail size, wind and damage threat, the local forecast discussion and hazardous weather outlook, a radar map with storm reports, storm cells and hurricane cones, and the Storm Prediction Center outlooks for days 1 through 8.
 
 ## What's in it
 
-- **Now**: active alerts, current conditions, NWS forecast text, today's SPC risk, the next 12 hours as a chart, then wind, humidity, pressure trend, visibility, UV and air quality.
+- **Now**: active alerts, current conditions, how it compares with this time yesterday, when rain or snow starts or stops in the next 3 hours, NWS forecast text, today's SPC risk, the next 12 hours as a chart, then wind, humidity, pressure trend, visibility, UV and air quality.
+- **Warning strip**: while a warning covers your place, a strip under the top bar shows it on every view, radar included, with a countdown once it's within 3 hours of expiring.
 - **Forecast**: the hourly chart (24 hours, 48 hours or 7 days), the 10-day list you can expand for detail, and an hour-by-hour table.
-- **Radar**: reflectivity (national mosaic or a single radar), velocity, rotation (storm-relative velocity), echo tops, radar-estimated rainfall (1, 24, 48, 72 hours), future radar (HRRR), satellite (infrared, visible, water vapor), and model wind and temperature maps. Loops, play and step with space and the arrow keys.
+- **Radar**: reflectivity (national mosaic or a single radar), velocity, rotation (storm-relative velocity), echo tops, radar-estimated rainfall (1, 24, 48, 72 hours), future radar (HRRR, with the real valid time on every frame), a GOES East satellite loop (infrared, GeoColor, water vapor), and model wind and temperature maps. Loops, play and step with space and the arrow keys.
+- **Pointer readout**: on the desktop, the reflectivity under the mouse in dBZ, and how far and which way that spot is from your place.
 - **Radar sites**: every NEXRAD site is a dot on the map. Click one to see just that radar, click it again (or "Back to all radars") to return to the national mosaic. Velocity and rotation start on your nearest radar.
-- **Radar overlays**: warnings, watches, advisories, SPC mesoscale discussions, storm reports, the SPC day 1 outlook and county lines.
+- **Radar overlays**: warnings, watches, advisories, SPC mesoscale discussions, storm reports, NEXRAD storm cells (tornado vortex signatures, mesocyclones and hail, with where each cell is headed in the next 30 minutes), NHC hurricane cones, the SPC day 1 outlook, labels on warning shapes (TO, SV, FF) and county lines. Chips over the timeline show which overlays are on, and turn red if one failed to load. It retries on its own.
 - **Storm reports**: the NWS local storm reports from the last 3, 6, 12, 24 or 48 hours, as dots colored by kind (tornado, hail, wind, flood, winter, other). Click one for the size, place, time and the spotter's remark.
 - **Reflectivity color modes**: IEM default, NWS classic, smooth, soft, color-blind safe and grayscale, plus a cutoff to hide weak echoes and ground clutter.
 - **Outlooks**: SPC days 1 to 8, with categorical, tornado, wind, hail and any-severe maps, hatched significant areas, and the risk at your exact location.
-- **Alerts**: everything active for your location, full text, and a button that jumps to the polygon on the radar. If an SPC mesoscale discussion covers your spot, it shows here too, and as a banner on Now. Those often come an hour or so before a watch.
-- **Discussion**: your NWS office's Area Forecast Discussion, cleaned up for reading, and its Hazardous Weather Outlook on the "Hazards" tab.
-- **Desktop notifications** for new warnings at your saved location (or watches and mesoscale discussions too, if you want them), and an optional tray mode so it keeps watching with the window closed. An update to a warning you already got stays quiet, so a storm that gets re-issued every 20 minutes pings you once.
-- **Keyboard**: `1` to `6` jump between views, `/` jumps to search, and on the radar space plays or pauses and the arrow keys step frames.
+- **Alerts**: everything active for your location, most dangerous first, with the impact tags the NWS attaches (tornado radar indicated or observed, hail size, peak gust, damage threat), Tornado Emergency and PDS called out, full text, and a button that jumps to the polygon on the radar. If an SPC mesoscale discussion covers your spot, it shows here too, and as a banner on Now. Those often come an hour or so before a watch. If the NWS stops answering, Alerts says so and how old the list is, instead of looking like a quiet sky.
+- **Discussion**: your NWS office's Area Forecast Discussion, cleaned up for reading, with whatever changed since the previous issuance marked in the margin, and its Hazardous Weather Outlook on the "Hazards" tab.
+- **Notifications** on the desktop and on Android, for new warnings at your place and at any saved place you ring the bell on (or watches and mesoscale discussions too, if you want them). An update to a warning you already got stays quiet, unless it gets worse (a tornado warning turning into a tornado emergency pings you again). Tornado warnings, extreme wind warnings, emergencies and PDS warnings make a sound and stay on screen. Quiet hours let only those through. If the NWS can't be reached for 15 minutes, you get one notice saying so.
+- **Tray**: on the desktop, the tray icon and its tooltip show your temperature and active warnings, and the icon gets a red dot while a warning is up. Optional: keep running in the tray when the window closes, and start at login hidden in the tray.
+- **Keyboard**: `1` to `6` jump between views, `/` jumps to search, `r` refreshes, `?` lists every shortcut, and on the radar space plays or pauses and the arrow keys step frames.
 - **Map tile cache**: radar frames, county lines and base maps are kept on disk, each until it goes stale, so zooming back out or reopening the app doesn't download them again. Details under "The map cache".
-- Dark, light, midnight or follow-the-system themes, US or metric units, 12 or 24 hour clock, saved places.
+- Dark, light, midnight, verdigris, Kawaii Light and Kawaii Dark themes, or follow the system. US or metric units, 12 or 24 hour clock, saved places.
+- **Honest timestamps**: "Updated" in the top bar is when Open-Meteo last confirmed the forecast. If it stops answering, that turns into "Forecast from 45 min ago" in red. The radar time turns red if the newest scan is more than 15 minutes old.
 
 ## Download and run
 
@@ -31,19 +35,21 @@ On Windows, and with the Linux `.tar.gz`, KEEP THE `Isobar` PROGRAM INSIDE ITS F
 
 Prerequisites: a desktop session (X11 or Wayland) and a few system libraries that Qt WebEngine expects the OS to provide. Most desktops already have them.
 
-I run openSUSE, so in my case that's:
+I run Kubuntu, so in my case that's:
 
 ```
-sudo zypper install libxcb-cursor0 libxkbcommon-x11-0 mozilla-nss libXcomposite1 libXdamage1 libXrandr2 libXtst6 libasound2
+sudo apt install libxcb-cursor0 libxkbcommon-x11-0 libnss3 libxcomposite1 libxdamage1 libxrandr2 libxtst6 libasound2t64
 ```
 
-On Debian or Ubuntu it's `sudo apt install libxcb-cursor0 libxkbcommon-x11-0 libnss3 libxcomposite1 libxdamage1 libxrandr2 libxtst6 libasound2`, or whichever names your distro uses for the same libraries.
+On older Ubuntu and Debian the last one is `libasound2`. On openSUSE it's `sudo zypper install libxcb-cursor0 libxkbcommon-x11-0 mozilla-nss libXcomposite1 libXdamage1 libXrandr2 libXtst6 libasound2`, or whichever names your distro uses for the same libraries.
+
+Optional, for alert notifications that stay on screen and make a sound: `notify-send` (package `libnotify-bin` on Ubuntu, `libnotify-tools` on openSUSE) and `canberra-gtk-play` (`gnome-session-canberra` or `libcanberra-gtk3-module`, depending on the distro). Without them Isobar falls back to the tray's own notifications.
 
 There are two Linux downloads with the same app inside. The AppImage is one file you mark executable and run. The `.tar.gz` is a folder you unpack. Pick the AppImage unless you have a reason not to.
 
 #### AppImage
 
-The AppImage also needs FUSE to mount itself, which most desktops already have. If it says it can't mount, install it. In my case that's `sudo zypper install fuse3`, on Debian or Ubuntu `sudo apt install fuse3`, or whichever package gives you `fusermount3` or `fusermount`.
+The AppImage also needs FUSE to mount itself, which most desktops already have. If it says it can't mount, install it. In my case that's `sudo apt install fuse3`, on openSUSE `sudo zypper install fuse3`, or whichever package gives you `fusermount3` or `fusermount`.
 
 1. Download `Isobar-<version>-linux-x86_64.AppImage`.
 2. Move it somewhere permanent: `mkdir -p ~/Applications && mv Isobar-*-linux-x86_64.AppImage ~/Applications/` since that's where AppImage tools look by default.
@@ -95,10 +101,12 @@ Play Protect may warn that it doesn't recognize the developer, since the app isn
 What's different on Android:
 
 - The whole UI is the same, laid out for a phone: the view buttons move to a bottom bar, and the radar and outlook panels fold up into one button until you tap them.
-- There are no alert notifications. On the desktop they come from the tray icon, and Android needs a separate background service for that, which this build doesn't have yet. Keep WEA alerts turned on in your phone's settings.
+- Alert notifications come from a background check about every 15 minutes, which is the shortest interval Android allows apps without a permanent notification. That's slower than the desktop's 2 minutes, so keep WEA alerts turned on in your phone's settings too. Tapping a notification opens Alerts.
+- Notifications use three channels you can tune in Android's settings: "Tornado warnings and emergencies" (loud, vibrates), "Warnings" and "Watches and other alerts". On first launch Android 13 and later ask whether Isobar may post notifications.
+- "Use my location" is at the top of the search list, and "Follow my location" in Settings moves your place to wherever the phone is each time you open the app. Both use coarse location (about a kilometer) and only while the app is open. Isobar never asks for background location.
 - The back button closes whatever is open (Settings, search, a map panel), then goes back to Now, then leaves the app.
 - With gesture navigation on a phone with rounded screen corners, the bottom bar pulls in at the ends so the corners don't cut off Now and Settings.
-- The only permission is internet access. The app targets Android 17, so Android doesn't hand it the "Nearby devices" (local network) permission it gives older apps automatically. Isobar talks to its own built-in server on the phone and to the weather services online, and neither counts as your local network.
+- Permissions: internet access, notifications, and coarse location when you use it. The app targets Android 17, so Android doesn't hand it the "Nearby devices" (local network) permission it gives older apps automatically. Isobar talks to its own built-in server on the phone and to the weather services online, and neither counts as your local network.
 - Everything is stored inside the app's private storage, and uninstalling removes it all, settings included.
 
 ## Optional: a map key for the street maps
@@ -135,6 +143,7 @@ To run the tests: `python -m unittest discover -s tests -t .` from the repo root
 | Option | What it does |
 | --- | --- |
 | `--browser` | Open the UI in your default browser instead of the app window |
+| `--hidden` | Start in the tray without showing the window. "Start at login" uses this. |
 | `--port N` | Use a different local port (default 47130, or a random one if that's taken) |
 | `--no-sandbox` | Turn off Chromium's sandbox, for setups that block it |
 | `--software-gl` | Render without the GPU, for VMs and broken drivers |
@@ -152,13 +161,15 @@ How long a tile stays good depends on what it is:
 | Radar mosaic and single-radar scans | 24 hours | Each frame is one timestamped scan, which never changes. New scans have new addresses, so the loop picks them up on its own. |
 | County lines | 30 days | They don't move. |
 | Base maps (CARTO, Esri) | 7 days | Roads and labels change slowly. |
-| Future radar (HRRR) | 30 minutes | A new model run lands about every hour. |
+| Future radar (HRRR) | 24 hours | Frames name their model run, so a frame never changes. A new run gets new addresses. |
 | Echo tops loop | 10 minutes | Its frames are "N minutes ago" layers that all change together, so the loop only rebuilds every 10 minutes. |
-| Rainfall, satellite | 4 minutes | These addresses always mean "the latest", so the picture behind them changes. |
+| Rainfall | 4 minutes | These addresses always mean "the latest", so the picture behind them changes. |
 
 If the network drops, Isobar shows an expired tile rather than a blank one.
 
 The cache tops out around 6,000 tiles and drops the oldest past that. Settings, under Maps, shows how big it is and has a Clear button.
+
+The satellite loop is one image per frame from NESDIS rather than tiles. Those come from NESDIS without the headers a page needs to store them, so they lean on the regular browser cache instead.
 
 The cache is tied to the app's local address, which is why Isobar now always uses port 47130. If something else already has that port, Isobar picks a random one and the cache starts empty for that run. Same thing if you pass a different `--port`.
 
@@ -167,14 +178,15 @@ The cache is tied to the app's local address, which is why Isobar now always use
 Everything Isobar shows comes from services that are free because the people running them are generous. The app is built to ask them for as little as possible:
 
 - **Every request identifies itself** as Isobar, with a link to this repo, which the NWS and OpenStreetMap ask for.
-- **Every answer is cached** for as long as it can stay useful: forecasts 10 minutes, alerts 1 minute, SPC outlooks 10 minutes, mesoscale discussions 2 minutes, storm reports 5 minutes, NWS text forecasts 30 minutes, forecast discussions and hazardous weather outlooks a day once issued, search results and NWS grid points a day, place names for typed coordinates 30 days.
+- **Every answer is cached** for as long as it can stay useful: forecasts and the rain timing 10 minutes, alerts 1 minute, SPC outlooks 10 minutes, mesoscale discussions and storm cells 2 minutes, storm reports 5 minutes, hurricane cones 10 minutes, NWS text forecasts 30 minutes, forecast discussions and hazardous weather outlooks a day once issued, search results and NWS grid points a day, place names for typed coordinates 30 days.
 - **Storm reports are asked for nationwide**, in one of five fixed windows, and trimmed to the map on your end. Every pan and zoom reuses the same cached answer instead of asking again for each map view.
 - **Long-lived answers are kept on disk**, so a restart doesn't refetch them.
 - **Expired answers are revalidated, not refetched.** If a server sent an ETag or Last-Modified date, Isobar asks "has this changed?" and an unchanged answer comes back as a tiny "not modified".
 - **Identical requests share one call.** If five parts of the app want the same thing at once, the server gets asked once, and that holds when the call fails too.
-- **Failing services get left alone.** After an error, timeout or "slow down" from a host, Isobar backs off that host, honoring any Retry-After it sends, starting at 20 seconds and doubling up to 15 minutes. While it waits, you see the last good answer if there is one.
-- **Nothing refreshes while you aren't looking.** The forecast refreshes every 10 minutes and alerts every 2, and only while the window is visible. Desktop notifications check alerts every 2 minutes.
-- **Map requests are shaped to reuse answers.** Watch and warning boxes snap to a coarse grid, so panning around lands on the same few areas. The wind and temperature maps ask for a padded area and reuse it while you pan inside it.
+- **Failing services get left alone.** After an error, timeout or "slow down", Isobar backs off that service, honoring any Retry-After it sends, starting at 20 seconds and doubling up to 15 minutes. While it waits, you see the last good answer if there is one, and the UI says how old it is. Backoff is kept per service path, so the NWS forecast endpoint failing never holds up NWS alerts. Plain 500 errors from the NWS API don't trigger backoff at all, since it throws them often for one grid point and answers fine on the next try.
+- **Nothing refreshes while you aren't looking.** The forecast refreshes every 10 minutes, and only while the window is visible. Alerts refresh every 2 minutes, also while the window is hidden in the tray, so the tray icon stays honest. Notifications check alerts every 2 minutes on the desktop and about every 15 on Android.
+- **Radar loops only download what's new.** A refresh keeps the frames already loaded and adds the newest scan. Frames load one or two at a time, the one on screen first, and zooming reloads the rest in turn instead of all at once.
+- **Map requests are shaped to reuse answers.** Watch and warning boxes snap to a coarse grid, so panning around lands on the same few areas. The wind and temperature maps ask Open-Meteo for at most 48 points over a padded area and reuse it while you pan inside it.
 - **Typed coordinates aren't looked up per keystroke.** The place name for "34.58, -83.33" is fetched once, when you pick it, and those lookups are spaced at least a second apart per OpenStreetMap Nominatim's usage policy.
 
 ## Security
@@ -184,38 +196,47 @@ Isobar runs a small web server on your machine to show its UI, so it's locked do
 - **It only listens on 127.0.0.1**, so nothing else on your network can reach it.
 - **Every API call needs a random token** made fresh each launch. It moves out of the address bar as soon as the page loads.
 - **Requests from other websites are refused.** The server checks the Host header, which stops DNS rebinding, and turns away any request whose Origin isn't Isobar itself.
-- **A strict Content-Security-Policy** limits the page to its own scripts. The only outside hosts it may load from are the radar and map tile servers. Text from weather services is always escaped before display.
+- **A strict Content-Security-Policy** limits the page to its own scripts. The only outside hosts it may load from are the radar, map tile and NESDIS satellite servers. Text from weather services is always escaped before display.
 - **Tile servers are sent no Referer header**, so they don't learn the local address or the token.
 - **Links only ever open in your browser, and only web links** (http and https). Anything else, like a file path or a custom protocol, is dropped.
 - **The tile proxy fallback only fetches images from the Iowa Environmental Mesonet.** It refuses redirects and caps response sizes.
 - **Settings are validated before they're saved**: choices have to be one of the known answers, numbers are clamped to sane ranges, and the settings file is readable only by you, since it can hold your CARTO key.
-- **Map popups for storm reports and mesoscale discussions are built as page elements, not HTML strings**, so text in a report can never run as code.
-- **The GitHub workflow builds with read-only access.** Only the last job, which attaches the finished files to the release, can write to the repo. The actions are referenced by major version (`actions/checkout@v4`), not pinned to commits, so they pick up fixes without manual bumps. The tradeoff is that a bad release pushed under one of those tags upstream would run in the build.
+- **Map popups for storm reports, storm cells, hurricane cones and mesoscale discussions are built as page elements, not HTML strings**, so text in a report can never run as code.
+- **One copy per user.** Starting Isobar again raises the window that's already running, so there's never a second set of notifications. The check uses a local socket only your user can reach.
+- **The GitHub workflow builds with read-only access.** Only the release job, which uploads the finished files, can write to the repo, and the Android job can sign its provenance attestation. The actions are referenced by major version (`actions/checkout@v4`), not pinned to commits, so they pick up fixes without manual bumps. The tradeoff is that a bad release pushed under one of those tags upstream would run in the build.
+- **The APK carries a signed SLSA build provenance attestation**, which proves it was built by this repo's workflow from a given commit. Check it with `gh attestation verify Isobar-<version>-android.apk --repo NullAngst/Isobar` on any machine that has the GitHub CLI, or with the `.sigstore.json` bundle attached next to the APK and any Sigstore verifier.
 
 ## Where it keeps things
 
-Settings (units, theme, saved places, radar choices) live in one JSON file. The cache folder holds the map tiles (under `webengine/storage`) and web data, and is safe to delete.
+Settings (units, theme, saved places, radar choices) live in one JSON file. The cache folder holds the map tiles (under `webengine/storage`), web data, and `notify-seen.json`, the list of alerts you've already been notified about. It's safe to delete; the worst case is a repeat notification for an alert that's still active.
+
+"Start at login" writes the system's own entry: `~/.config/autostart/io.github.nullangst.isobar.desktop` on Linux, an `Isobar` value under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` on Windows, and `~/Library/LaunchAgents/io.github.nullangst.isobar.plist` on macOS. Turning the setting off removes it.
 
 - Linux: `~/.config/isobar/settings.json` and `~/.cache/isobar/`
 - Windows: `%APPDATA%\Isobar\settings.json` and `%LOCALAPPDATA%\Isobar\Cache\`
 - macOS: `~/Library/Application Support/Isobar/settings.json` and `~/Library/Caches/Isobar/`
 - Android: inside the app's private storage. Clearing the app's storage in Android settings resets it.
 
-## Building releases
+## Making a release
 
-The workflow in `.github/workflows/build.yml` builds Linux (as a folder and an AppImage), Windows and macOS on GitHub's runners with PyInstaller, builds and signs the Android APK with Gradle, then attaches all of it to the release. I do this from the GitHub web UI, so that's what these steps use.
+The workflow in `.github/workflows/build.yml` builds Linux (as a folder and an AppImage), Windows and macOS on GitHub's runners with PyInstaller, builds and signs the Android APK with Gradle, attests the APK, then uploads all of it to an existing release. It only builds when you run it by hand. Pushes to `main` and pull requests run the checks (tests, syntax and shellcheck) and nothing else, and pushing a tag does nothing at all.
 
-The Android build needs a signing key in the repo's secrets first. That's a one-time setup, covered in the next section. Until it's done, the Android job fails with a message pointing there, and the desktop builds still go through.
+The Android build needs a signing key in the repo's secrets first. That's a one-time setup, covered in "Signing the Android app". Until it's done, the Android job fails with a message pointing there, and the desktop builds still go through.
 
-1. Bump the version in `isobar/__init__.py`. The macOS bundle and the Android build both read it from there.
-2. Commit and push, or upload the changed files through the web UI.
-3. Go to Releases, then "Draft a new release".
-4. Make a new tag like `v1.0.1` and give the release a title.
-5. Click "Publish release".
-6. Wait. The tests run first, then all four builds in parallel, roughly 10 to 15 minutes in all. Progress is on the Actions tab. If the tests fail, nothing builds.
-7. Refresh the release page. The `.AppImage` and its `.zsync` update file, the `.tar.gz`, two `.zip` files and the `.apk` are attached.
+1. Bump the version in `isobar/__init__.py`. The macOS bundle and the Android build both read it from there, and the release job refuses a tag that doesn't match it.
+2. Add an entry to `changes.md`.
+3. Commit and push, or upload the changed files through the web UI.
+4. Go to Releases, then "Draft a new release".
+5. Under "Choose a tag", type a new tag like `v1.5.0` and pick "Create new tag on publish". Give the release a title and notes.
+6. Click "Publish release". Nothing builds yet, which is expected.
+7. Go to Actions and click "Build and release" in the list on the left.
+8. Click "Run workflow". Under "Use workflow from", switch to the Tags tab and pick the tag you just made. Click the green "Run workflow".
+9. Wait. The checks run first, then all four builds in parallel, roughly 10 to 15 minutes in all. If the checks fail, nothing builds.
+10. Refresh the release page. The `.AppImage` and its `.zsync` update file, the `.tar.gz`, two `.zip` files, the `.apk` and its `.apk.sigstore.json` attestation are attached.
 
-For a test build without making a release, go to Actions, pick "Build and release", and click "Run workflow". The archives show up as artifacts at the bottom of that run's page.
+If the release job fails right away, read its message. It says whether you ran it on a branch instead of a tag, whether no release exists for that tag yet, or whether the tag doesn't match the version in `isobar/__init__.py`. Running it again on the same tag replaces the files that are already attached, so a rerun after a failed build is safe.
+
+For a test build without a release, run the workflow on `main` instead of a tag. The builds show up as artifacts at the bottom of that run's page, and the release job fails with the "not a tag" message, which is expected.
 
 ### Building the AppImage yourself
 
@@ -223,7 +244,7 @@ The workflow does this on its own. To do it on your machine, from a source check
 
 1. Install PyInstaller: `pip install pyinstaller`
 2. Build the app folder: `pyinstaller --noconfirm --clean isobar.spec`
-3. Wrap it: `bash packaging/appimage/build-appimage.sh v1.4.0` (the last part is only the label in the file name)
+3. Wrap it: `bash packaging/appimage/build-appimage.sh v1.5.0` (the last part is only the label in the file name)
 
 The AppImage and its `.zsync` land in the repo root. The script downloads `appimagetool` from its "continuous" release the first time, so it always gets the current one. The tradeoff is that nothing checks that download against a known hash. If you already have `appimagetool`, point the script at it with `APPIMAGETOOL=/path/to/appimagetool` and it skips the download.
 
@@ -265,7 +286,9 @@ A debug build and a release build have different signatures, so one won't instal
 
 - **Forecast, hourly data, air quality and the model wind/temperature maps**: [Open-Meteo](https://open-meteo.com/). Works worldwide. Free for non-commercial use with a daily request cap that one person won't come close to.
 - **Alerts, observations, forecast text, discussions**: the [National Weather Service API](https://www.weather.gov/documentation/services-web-api). US only.
-- **Radar, satellite, rainfall estimates, HRRR future radar, county lines**: the [Iowa Environmental Mesonet](https://mesonet.agron.iastate.edu/). US only. IEM is a university service run as a public good, so please don't point a hundred copies of this at it from one office.
+- **Radar, rainfall estimates, HRRR future radar, NEXRAD storm cells, county lines**: the [Iowa Environmental Mesonet](https://mesonet.agron.iastate.edu/). US only. IEM is a university service run as a public good, so please don't point a hundred copies of this at it from one office.
+- **Satellite loop**: GOES East from [NOAA NESDIS](https://www.nesdis.noaa.gov/imagery/interactive-maps). If that service doesn't answer, Isobar shows IEM's latest single satellite image instead.
+- **Hurricane cones and tracks**: the National Hurricane Center, through NOAA's tropical map service.
 - **Warning and watch polygons on the map**: NOAA's watch/warning/advisory map service.
 - **Mesoscale discussions**: NOAA's SPC mesoscale discussion map service. Isobar shows the outline and links to the full text on spc.noaa.gov.
 - **Storm reports**: the NWS local storm reports, through the [Iowa Environmental Mesonet](https://mesonet.agron.iastate.edu/). Reports are preliminary and often get corrected later.
@@ -276,15 +299,17 @@ Things you should know before relying on it:
 
 - The Android app is a thin shell: Python runs inside it through [Chaquopy](https://chaquo.com/chaquopy/) and serves the same UI to a WebView. That makes it bigger than a native app would be (Python itself is in there), and the first launch after an install or update takes a few seconds while it unpacks.
 - Outside the US you get the forecast and the model maps. Radar, alerts, outlooks, storm reports and discussions are blank.
+- Storm cells are what each radar's own algorithm flagged. A tornado vortex signature is a radar signature, not a confirmed tornado, and the arrows are a straight-line guess at where a cell will be in 30 minutes.
+- The satellite loop is GOES East only. It covers the lower 48, but the West Coast is seen at a slant.
 - The custom color modes only apply to reflectivity. Velocity, rotation, echo tops, rainfall, future radar and satellite use the source colors and the legend shows them.
 - The Wind and Temperature maps are model output from Open-Meteo, not station observations. They can be off by a few degrees or a few mph, and they don't show storm-scale gusts.
 - Single-radar products update as fast as IEM processes them, usually within a few minutes of the scan. That's fine for watching weather. It isn't a replacement for a Level II viewer like GR2Analyst if you're tracking a tornado in real time.
 - If any of these services go down or change their formats, the matching part of the app goes blank until it's fixed. The rest keeps working.
 - The download is big: the AppImage is about 180 MB, and the folder is about 440 MB unpacked. Almost all of that is Qt WebEngine (a full Chromium engine). That's the price of a real map and chart renderer in a desktop window. If that bothers you, run from source with `--browser`.
-- I beg you not to treat this as your only warning source. Have a NOAA weather radio or WEA alerts on your phone too. Isobar only notifies you while it's running.
+- I beg you not to treat this as your only warning source. Have a NOAA weather radio or WEA alerts on your phone too. On the desktop Isobar only notifies you while it's running, and on Android the background check can run late when the phone is saving battery.
 
 ## License
 
 GPL-3.0. See [LICENSE](LICENSE). Leaflet is BSD-2-Clause and IBM Plex Sans is under the SIL Open Font License; their license files are in `isobar/web/vendor/leaflet/` and `isobar/web/fonts/`.
 
-Once it's installed and you've searched your town, Isobar sits there showing the current conditions, the radar loop and any warnings for your spot, and pings you when a new warning drops. Tinker with the themes, palettes and overlays as you see fit.
+Once it's installed and you've searched your town, Isobar sits in your tray (or in your phone's background) showing the current conditions, the radar loop and any warnings for your spot, and pings you when a new warning drops. Tinker with the themes, palettes and overlays as you see fit.

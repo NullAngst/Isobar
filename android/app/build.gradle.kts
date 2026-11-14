@@ -27,7 +27,8 @@ android {
     // Android 17. Targeting it also turns off the implicit "local network"
     // grant Android 17 gives older apps, which shows up as "Nearby devices".
     // Isobar only talks to its own server on 127.0.0.1 (which is not the local
-    // network) and to the internet, so it needs no permission beyond INTERNET.
+    // network) and to the internet. Beyond INTERNET it asks for notifications
+    // (alerts) and coarse location ("Use my location"), both at runtime.
     compileSdk = 37
 
     defaultConfig {
@@ -77,6 +78,9 @@ kotlin {
 dependencies {
     implementation("androidx.appcompat:appcompat:1.7.1")
     implementation("androidx.core:core-ktx:1.16.0")
+    // Runs the background alert check every 15 minutes (AlertWorker.kt).
+    implementation("androidx.work:work-runtime-ktx:2.10.2")
+    implementation("androidx.activity:activity-ktx:1.10.1")
 }
 
 // Copy the isobar package (server, data sources and web UI) out of the repo
