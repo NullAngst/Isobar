@@ -1,18 +1,23 @@
 name: Build and release
 
+# Builds only when run by hand: Actions, "Build and release", "Run workflow",
+# then pick a tag under "Use workflow from". The release must already exist
+# for that tag (make it on the Releases page first). Pushes to main and pull
+# requests only run the checks. Pushing a tag does nothing.
 on:
-  release:
-    types: [published]
+  push:
+    branches: [main]
+  pull_request:
   workflow_dispatch:
 
-# Every job reads only. The release job at the bottom is the one place that
-# can write, and it only uploads files the other jobs already built.
+# Every job reads only, unless it says otherwise below. The release job is the
+# one place that can write, and it only uploads files the other jobs built.
 permissions:
   contents: read
 
 jobs:
-  test:
-    name: Tests
+  checks:
+    name: Checks
     runs-on: ubuntu-latest
     steps:
       - name: Check out
@@ -23,15 +28,46 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: Install the one dependency the tests need
         run: python -m pip install requests
 
       - name: Run the tests
         run: python -m unittest discover -s tests -t . -v
 
+      - name: Check the Python sources compile
+        run: python -m compileall -q isobar run.py
+
+      - name: Check the web UI scripts parse
+        run: |
+          mkdir -p "$RUNNER_TEMP/js"
+          for f in isobar/web/js/*.js isobar/web/sw.js; do
+            cp "$f" "$RUNNER_TEMP/js/$(basename "$f" .js).mjs"
+            node --check "$RUNNER_TEMP/js/$(basename "$f" .js).mjs"
+          done
+
+      - name: Shellcheck the packaging scripts
+        run: shellcheck packaging/appimage/build-appimage.sh packaging/appimage/AppRun
+
+      # On a tag, the version has to match before twenty minutes of builds start.
+      - name: Check the tag matches the version
+        if: github.event_name == 'workflow_dispatch' && github.ref_type == 'tag'
+        run: |
+          version="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' isobar/__init__.py)"
+          tag="${GITHUB_REF_NAME#[vV]}"
+          if [ "$tag" != "$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match version $version in isobar/__init__.py. Bump the version or pick the right tag."
+            exit 1
+          fi
+
   build:
     name: Build ${{ matrix.name }}
-    needs: test
+    needs: checks
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -65,9 +101,6 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt pyinstaller
-
-      - name: Check the sources compile
-        run: python -m compileall -q isobar run.py
 
       - name: Build
         run: pyinstaller --noconfirm --clean isobar.spec
@@ -111,8 +144,14 @@ jobs:
 
   android:
     name: Build android-apk
-    needs: test
+    needs: checks
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    # id-token and attestations are for the signed SLSA provenance on the APK.
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
 
     steps:
       - name: Check out
@@ -151,9 +190,8 @@ jobs:
           ISOBAR_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ISOBAR_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ISOBAR_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          chmod +x gradlew
-          ./gradlew --no-daemon assembleRelease
+        # Called through bash, since a web UI upload drops the execute bit.
+        run: bash gradlew --no-daemon assembleRelease
 
       - name: Check the signature
         run: |
@@ -166,23 +204,49 @@ jobs:
         if: always()
         run: rm -f "$RUNNER_TEMP/isobar-release.jks"
 
+      - name: Attest the build provenance
+        id: attest
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: Isobar-${{ github.ref_name }}-android.apk
+
+      # The same signed attestation as a file, for checking without the GitHub CLI.
+      - name: Keep the attestation bundle
+        run: cp "${{ steps.attest.outputs.bundle-path }}" "Isobar-${{ github.ref_name }}-android.apk.sigstore.json"
+
       - name: Keep the APK as a workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: Isobar-android
-          path: Isobar-*-android.apk
+          path: |
+            Isobar-*-android.apk
+            Isobar-*-android.apk.sigstore.json
           if-no-files-found: error
 
   release:
     name: Attach to the release
     needs: [build, android]
-    # Runs when a release is published, even if one build failed (a missing
-    # Android signing key, say), so whatever did build still gets attached.
-    if: github.event_name == 'release' && !cancelled()
+    # Runs even if one build failed (a missing Android signing key, say), so
+    # whatever did build still gets attached.
+    if: github.event_name == 'workflow_dispatch' && !cancelled()
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
     steps:
+      - name: Check this run is for a tag with a release
+        run: |
+          if [ "$GITHUB_REF_TYPE" != "tag" ]; then
+            echo "::error::This run is on the branch '$GITHUB_REF_NAME', not a tag, so there is no release to attach to. The builds are still in this run's artifacts. To release, make the release and tag on the Releases page, then run the workflow and pick that tag under 'Use workflow from'."
+            exit 1
+          fi
+          if ! gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            echo "::error::No release exists for tag $GITHUB_REF_NAME yet. Make it on the Releases page (Draft a new release, pick this tag, Publish), then run this workflow again on the tag."
+            exit 1
+          fi
+
       - name: Collect the builds
         uses: actions/download-artifact@v4
         with:
@@ -190,7 +254,11 @@ jobs:
           merge-multiple: true
 
       - name: Attach them
-        uses: softprops/action-gh-release@v2
-        with:
-          files: out/*
-          fail_on_unmatched_files: true
+        run: |
+          set -- out/*
+          if [ ! -e "$1" ]; then
+            echo "::error::No builds to attach. Check the build jobs above for what failed."
+            exit 1
+          fi
+          # --clobber replaces files from an earlier run on the same tag.
+          gh release upload "$GITHUB_REF_NAME" "$@" --clobber
