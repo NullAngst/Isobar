@@ -58,7 +58,8 @@ Things that have changed before, or are likely to:
 1. Install the latest APK on a phone with the newest Android you have.
 2. Confirm the notification permission prompt appears on a fresh install, and that a test alert (pick a place with an active advisory and set Notify me to "All alerts") arrives within about 15 minutes.
 3. Confirm "Use my location" works and asks only for approximate location.
-4. When Google raises the minimum target SDK for new installs, raise `compileSdk` and `targetSdk` in `android/app/build.gradle.kts`.
+4. Add both widgets to a home screen. Check they fill in within a minute, follow a theme change in Settings, Widgets, and that the wide one hides its hours row when resized to 4x1. Launchers differ in cell sizes; the size cutoffs are `HOURS_MIN_HEIGHT_DP` and `SMALL_COMPACT_HEIGHT_DP` in `Widgets.kt`.
+5. When Google raises the minimum target SDK for new installs, raise `compileSdk` and `targetSdk` in `android/app/build.gradle.kts`.
 
 ### 5. Prune and look at sizes
 
@@ -68,8 +69,9 @@ Things that have changed before, or are likely to:
 ## When something breaks between check-ups
 
 1. Run with `python run.py --debug` (or the AppImage with `--debug`) and watch the log. Upstream failures log as "upstream error" or "backing off".
-2. A service backing off clears itself; the UI shows the last good answer with its age in the meantime.
-3. If one service changed its format, fix the parser in `sources.py`, add a test with a canned copy of the new answer in `tests/test_sources.py`, and make a release.
+2. A service backing off clears itself; the UI shows the last good answer with its age in the meantime. A single timeout never starts a backoff: Isobar retries once on a fresh connection first, and `--debug` logs "on attempt 1" when that happens. Seeing that line a lot for one service means it, or the path to it, is struggling.
+3. A widget that shows old data: open Isobar once (it tells the widgets to refresh), then check Android's battery settings for Isobar. "Restricted" stops the background check that keeps widgets and notifications current.
+4. If one service changed its format, fix the parser in `sources.py`, add a test with a canned copy of the new answer in `tests/test_sources.py`, and make a release.
 
 ## Making a release after maintenance
 

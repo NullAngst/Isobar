@@ -1,5 +1,19 @@
 # Changes
 
+2026.11.15 - Android widgets / Network reliability
+
+* Home screen widgets for the Android app: a small one (temperature, conditions, place, the most serious warning or watch) and a wide one that adds high and low, feels like, rain chance, last update time and the next five hours. Tapping opens the app; tapping the alert line opens Alerts.
+* Widget settings, under Settings, Widgets on Android: the widget's place (same as the app, or any starred place), its theme (same as the app, matching the phone, or any app theme), a solid, see-through or no background, and whether to show alerts, details and the hours row.
+* Widgets refresh after each background alert check (about every 15 minutes), whenever the app loads the forecast or a widget setting changes, and when Android asks (every 30 minutes at most). The last data is kept so Android can redraw them without starting Python.
+* Weather icons for the widgets as Android vector drawables, matching the app's icon set.
+* Weather data requests (JSON and text) open a fresh connection every time instead of reusing a kept-open one. Map tiles still reuse connections.
+* Separate timeouts: 10 seconds to connect, 15 seconds of silence while waiting for data.
+* A request that times out, loses its connection, or stops partway through the body is retried once on a fresh connection before it counts as a failure. Only a request that fails twice in a row starts a backoff.
+* Fixed: a connection that stalled partway through a response raised a raw error that skipped the stale-copy fallback, so the UI showed an error even when a recent copy was available.
+* Fixed: long checkbox labels in the settings drawer dropped below their checkbox since 1.5.0.
+
+Reasons for changes: after 1.5.0 the Android app showed "Forecast unavailable" with a ReadTimeout from Open-Meteo for a while, even though Open-Meteo answered the PC and the phone's browser instantly. The likely cause is kept-open connections that died while the phone slept or switched networks; 1.5.0 opened two Open-Meteo connections per refresh, leaving more of them to go stale. Fresh connections plus one retry make a single stall invisible. Widgets were asked for, for the phone.
+
 2026.11.14 - Alerts overhaul / Radar performance / Android notifications / Release workflow
 
 * The 1.4.1 changes that had been uploaded to the repo root (stacked-polygon popups on the radar, the radar product panel remembering whether it's open) are now in `isobar/` where the build picks them up. The stray root copies are gone.

@@ -103,6 +103,7 @@ What's different on Android:
 - The whole UI is the same, laid out for a phone: the view buttons move to a bottom bar, and the radar and outlook panels fold up into one button until you tap them.
 - Alert notifications come from a background check about every 15 minutes, which is the shortest interval Android allows apps without a permanent notification. That's slower than the desktop's 2 minutes, so keep WEA alerts turned on in your phone's settings too. Tapping a notification opens Alerts.
 - Notifications use three channels you can tune in Android's settings: "Tornado warnings and emergencies" (loud, vibrates), "Warnings" and "Watches and other alerts". On first launch Android 13 and later ask whether Isobar may post notifications.
+- **Home screen widgets**: long-press an empty spot on your home screen, tap Widgets, and find Isobar. The small one (2x2, shrinks to 2x1) shows the temperature, conditions, place and the most serious active warning or watch. The wide one (4x2) adds high and low, feels like, rain chance, when it last updated, and the next five hours, which hide if you resize it too short. Tap a widget to open Isobar, or its alert line to open Alerts. In Settings, under Widgets, you pick the widget's place (any starred place, or the same as the app), its theme, a solid, see-through or no background, and which lines show. Widgets update with the alert check about every 15 minutes, and right away whenever Isobar is open.
 - "Use my location" is at the top of the search list, and "Follow my location" in Settings moves your place to wherever the phone is each time you open the app. Both use coarse location (about a kilometer) and only while the app is open. Isobar never asks for background location.
 - The back button closes whatever is open (Settings, search, a map panel), then goes back to Now, then leaves the app.
 - With gesture navigation on a phone with rounded screen corners, the bottom bar pulls in at the ends so the corners don't cut off Now and Settings.
@@ -183,7 +184,8 @@ Everything Isobar shows comes from services that are free because the people run
 - **Long-lived answers are kept on disk**, so a restart doesn't refetch them.
 - **Expired answers are revalidated, not refetched.** If a server sent an ETag or Last-Modified date, Isobar asks "has this changed?" and an unchanged answer comes back as a tiny "not modified".
 - **Identical requests share one call.** If five parts of the app want the same thing at once, the server gets asked once, and that holds when the call fails too.
-- **Failing services get left alone.** After an error, timeout or "slow down", Isobar backs off that service, honoring any Retry-After it sends, starting at 20 seconds and doubling up to 15 minutes. While it waits, you see the last good answer if there is one, and the UI says how old it is. Backoff is kept per service path, so the NWS forecast endpoint failing never holds up NWS alerts. Plain 500 errors from the NWS API don't trigger backoff at all, since it throws them often for one grid point and answers fine on the next try.
+- **Stalled connections get one more try.** Weather data requests open a fresh connection every time, since a phone that slept or switched networks leaves kept-open connections dead without noticing. A request that times out (10 seconds to connect, 15 seconds of silence while waiting for data) or loses its connection is tried once more on a fresh connection before it counts as a failure. Map tiles still reuse connections, since a radar loop is hundreds of requests.
+- **Failing services get left alone.** After an error, a request that failed twice in a row, or a "slow down", Isobar backs off that service, honoring any Retry-After it sends, starting at 20 seconds and doubling up to 15 minutes. While it waits, you see the last good answer if there is one, and the UI says how old it is. Backoff is kept per service path, so the NWS forecast endpoint failing never holds up NWS alerts. Plain 500 errors from the NWS API don't trigger backoff at all, since it throws them often for one grid point and answers fine on the next try.
 - **Nothing refreshes while you aren't looking.** The forecast refreshes every 10 minutes, and only while the window is visible. Alerts refresh every 2 minutes, also while the window is hidden in the tray, so the tray icon stays honest. Notifications check alerts every 2 minutes on the desktop and about every 15 on Android.
 - **Radar loops only download what's new.** A refresh keeps the frames already loaded and adds the newest scan. Frames load one or two at a time, the one on screen first, and zooming reloads the rest in turn instead of all at once.
 - **Map requests are shaped to reuse answers.** Watch and warning boxes snap to a coarse grid, so panning around lands on the same few areas. The wind and temperature maps ask Open-Meteo for at most 48 points over a padded area and reuse it while you pan inside it.
@@ -227,7 +229,7 @@ The Android build needs a signing key in the repo's secrets first. That's a one-
 2. Add an entry to `changes.md`.
 3. Commit and push, or upload the changed files through the web UI.
 4. Go to Releases, then "Draft a new release".
-5. Under "Choose a tag", type a new tag like `v1.5.0` and pick "Create new tag on publish". Give the release a title and notes.
+5. Under "Choose a tag", type a new tag like `v1.6.0` and pick "Create new tag on publish". Give the release a title and notes.
 6. Click "Publish release". Nothing builds yet, which is expected.
 7. Go to Actions and click "Build and release" in the list on the left.
 8. Click "Run workflow". Under "Use workflow from", switch to the Tags tab and pick the tag you just made. Click the green "Run workflow".
@@ -244,7 +246,7 @@ The workflow does this on its own. To do it on your machine, from a source check
 
 1. Install PyInstaller: `pip install pyinstaller`
 2. Build the app folder: `pyinstaller --noconfirm --clean isobar.spec`
-3. Wrap it: `bash packaging/appimage/build-appimage.sh v1.5.0` (the last part is only the label in the file name)
+3. Wrap it: `bash packaging/appimage/build-appimage.sh v1.6.0` (the last part is only the label in the file name)
 
 The AppImage and its `.zsync` land in the repo root. The script downloads `appimagetool` from its "continuous" release the first time, so it always gets the current one. The tradeoff is that nothing checks that download against a known hash. If you already have `appimagetool`, point the script at it with `APPIMAGETOOL=/path/to/appimagetool` and it skips the download.
 
