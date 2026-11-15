@@ -170,6 +170,7 @@ async function loadData() {
     }
     loadedAt = Date.now();
     updateAlertUi();
+    widgetsChanged();
     emit('data', data);
     if (first) render(); else refreshView();
     renderTop();
@@ -210,6 +211,7 @@ async function refreshAlerts() {
     data.ages = { ...(data.ages || {}), alerts: res.age };
     data.mcds = res.mcds || [];
     updateAlertUi();
+    if (before !== key(data)) widgetsChanged();
     if (before !== key(data) && ['now', 'alerts'].includes(state.view)) refreshView();
   } catch (err) {
     console.warn('alerts', err);
@@ -217,6 +219,18 @@ async function refreshAlerts() {
     updateAlertUi();
   }
 }
+
+// ------------------------------------------------------------------ Android home screen widgets
+
+// Tells the Android app to redraw its widgets. Debounced past the settings
+// save (300 ms), so the widgets read the settings as they now are.
+const widgetsChanged = debounce(() => {
+  if (window.IsobarAndroid && window.IsobarAndroid.widgetsChanged) {
+    try { window.IsobarAndroid.widgetsChanged(); } catch { /* bridge missing */ }
+  }
+}, 1500);
+
+const WIDGET_KEYS = new Set(['units', 'clock', 'theme', 'location', 'saved']);
 
 // ------------------------------------------------------------------ alert badge, warning strip, title and tray
 
@@ -680,6 +694,33 @@ function alertsSection() {
   return out;
 }
 
+function widgetSection() {
+  const s = state.settings;
+  const same = (a, b) => a && b && Math.abs(a.lat - b.lat) < 1e-3 && Math.abs(a.lon - b.lon) < 1e-3;
+  const placeSel = el('select', {
+    onchange: (e) => {
+      const i = e.target.value;
+      saveSettings({ widget_place: i === '' ? null : { name: s.saved[Number(i)].name, lat: s.saved[Number(i)].lat, lon: s.saved[Number(i)].lon } });
+    },
+  }, el('option', { value: '' }, 'Same as the app'), ...s.saved.map((p, i) => el('option', { value: String(i) }, p.name)));
+  const picked = s.saved.findIndex((p) => same(p, s.widget_place));
+  placeSel.value = picked >= 0 ? String(picked) : '';
+  return [
+    el('h3', {}, 'Widgets'),
+    el('p', { class: 'muted small' },
+      'Long-press an empty spot on your home screen, tap Widgets, and find Isobar. ',
+      'The small one shows the temperature, conditions and the top alert. The wide one adds high and low, feels like and the next five hours. ',
+      'They update about every 15 minutes, and right away whenever Isobar is open.'),
+    el('label', { class: 'set-row' }, el('span', { class: 'set-label' }, 'Place'), placeSel),
+    el('p', { class: 'muted small' }, 'Any starred place can be the widget place, so it can stay on home while you look around elsewhere.'),
+    select('Theme', 'widget_theme', [['app', 'Same as the app'], ...THEMES]),
+    seg('Background', 'widget_bg', [['solid', 'Solid'], ['translucent', 'See-through'], ['clear', 'None']]),
+    checkbox('widget_alerts', 'Show warnings and watches'),
+    checkbox('widget_details', 'Show high and low, feels like and rain chance'),
+    checkbox('widget_hours', 'Show the next five hours on the wide widget'),
+  ];
+}
+
 function renderSettings() {
   const body = $('settings-body');
   body.replaceChildren();
@@ -724,6 +765,7 @@ function renderSettings() {
     select('Loop length', 'radar_loop_minutes', [[30, '30 minutes'], [60, '1 hour'], [90, '90 minutes'], [120, '2 hours'], [180, '3 hours']], true),
     select('Loop speed', 'radar_speed_ms', [[700, 'Slow'], [450, 'Normal'], [250, 'Fast']], true),
     ...alertsSection(),
+    ...(platform === 'android' ? widgetSection() : []),
     el('h3', {}, 'Saved places'),
     savedBox,
     el('p', { class: 'muted small' }, 'The bell turns on notifications for that place too.'),
@@ -761,6 +803,7 @@ function closeSettings() {
 }
 
 on('settings', (patch) => {
+  if (Object.keys(patch).some((k) => k.startsWith('widget_') || WIDGET_KEYS.has(k))) widgetsChanged();
   if ('theme' in patch) applyTheme();
   if ('units' in patch || 'clock' in patch) renderTop();
   if (('units' in patch || 'clock' in patch) && !$('strip').hidden) renderStrip();

@@ -1,0 +1,291 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Wide widget (4x2): place, temperature, condition, high and low, feels like,
+     rain chance, the top alert, and the next five hours. The hours row hides
+     itself when the widget is resized too short for it. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <ImageView
+        android:id="@+id/widget_bg"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:scaleType="fitXY"
+        android:src="@drawable/widget_shape"
+        android:importantForAccessibility="no" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:gravity="center_vertical"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingTop="10dp"
+        android:paddingBottom="10dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/place"
+                    style="@style/WidgetText"
+                    android:layout_width="match_parent"
+                    android:text="Isobar"
+                    android:textSize="13sp" />
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <ImageView
+                        android:id="@+id/wx_icon"
+                        android:layout_width="40dp"
+                        android:layout_height="40dp"
+                        android:src="@drawable/wx_partly_day"
+                        android:importantForAccessibility="no" />
+
+                    <TextView
+                        android:id="@+id/temp"
+                        style="@style/WidgetText"
+                        android:layout_marginStart="8dp"
+                        android:text="64°"
+                        android:textSize="40sp" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:gravity="end">
+
+                <TextView
+                    android:id="@+id/cond"
+                    style="@style/WidgetText"
+                    android:text="Partly cloudy"
+                    android:textSize="14sp" />
+
+                <TextView
+                    android:id="@+id/hilo"
+                    style="@style/WidgetText"
+                    android:text="H 70°  L 48°"
+                    android:textSize="13sp" />
+
+                <TextView
+                    android:id="@+id/feels"
+                    style="@style/WidgetText"
+                    android:text="Feels like 62°"
+                    android:textSize="12sp" />
+
+                <TextView
+                    android:id="@+id/rain"
+                    style="@style/WidgetText"
+                    android:textSize="12sp"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/updated"
+                    style="@style/WidgetText"
+                    android:text="4:05 PM"
+                    android:textSize="11sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <FrameLayout
+            android:id="@+id/alert_row"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:visibility="gone">
+
+            <ImageView
+                android:id="@+id/alert_bg"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:scaleType="fitXY"
+                android:src="@drawable/widget_pill"
+                android:importantForAccessibility="no" />
+
+            <TextView
+                android:id="@+id/alert"
+                style="@style/WidgetText"
+                android:layout_width="match_parent"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+        </FrameLayout>
+
+        <LinearLayout
+            android:id="@+id/hours_row"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:gravity="center_horizontal">
+
+                <TextView
+                    android:id="@+id/h0_time"
+                    style="@style/WidgetText"
+                    android:text="5 PM"
+                    android:textSize="11sp" />
+
+                <ImageView
+                    android:id="@+id/h0_icon"
+                    android:layout_width="22dp"
+                    android:layout_height="22dp"
+                    android:layout_marginTop="2dp"
+                    android:layout_marginBottom="2dp"
+                    android:src="@drawable/wx_partly_day"
+                    android:importantForAccessibility="no" />
+
+                <TextView
+                    android:id="@+id/h0_temp"
+                    style="@style/WidgetText"
+                    android:text="63°"
+                    android:textSize="13sp" />
+            </LinearLayout>
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:gravity="center_horizontal">
+
+                <TextView
+                    android:id="@+id/h1_time"
+                    style="@style/WidgetText"
+                    android:text="6 PM"
+                    android:textSize="11sp" />
+
+                <ImageView
+                    android:id="@+id/h1_icon"
+                    android:layout_width="22dp"
+                    android:layout_height="22dp"
+                    android:layout_marginTop="2dp"
+                    android:layout_marginBottom="2dp"
+                    android:src="@drawable/wx_partly_day"
+                    android:importantForAccessibility="no" />
+
+                <TextView
+                    android:id="@+id/h1_temp"
+                    style="@style/WidgetText"
+                    android:text="60°"
+                    android:textSize="13sp" />
+            </LinearLayout>
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:gravity="center_horizontal">
+
+                <TextView
+                    android:id="@+id/h2_time"
+                    style="@style/WidgetText"
+                    android:text="7 PM"
+                    android:textSize="11sp" />
+
+                <ImageView
+                    android:id="@+id/h2_icon"
+                    android:layout_width="22dp"
+                    android:layout_height="22dp"
+                    android:layout_marginTop="2dp"
+                    android:layout_marginBottom="2dp"
+                    android:src="@drawable/wx_partly_night"
+                    android:importantForAccessibility="no" />
+
+                <TextView
+                    android:id="@+id/h2_temp"
+                    style="@style/WidgetText"
+                    android:text="57°"
+                    android:textSize="13sp" />
+            </LinearLayout>
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:gravity="center_horizontal">
+
+                <TextView
+                    android:id="@+id/h3_time"
+                    style="@style/WidgetText"
+                    android:text="8 PM"
+                    android:textSize="11sp" />
+
+                <ImageView
+                    android:id="@+id/h3_icon"
+                    android:layout_width="22dp"
+                    android:layout_height="22dp"
+                    android:layout_marginTop="2dp"
+                    android:layout_marginBottom="2dp"
+                    android:src="@drawable/wx_clear_night"
+                    android:importantForAccessibility="no" />
+
+                <TextView
+                    android:id="@+id/h3_temp"
+                    style="@style/WidgetText"
+                    android:text="55°"
+                    android:textSize="13sp" />
+            </LinearLayout>
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:gravity="center_horizontal">
+
+                <TextView
+                    android:id="@+id/h4_time"
+                    style="@style/WidgetText"
+                    android:text="9 PM"
+                    android:textSize="11sp" />
+
+                <ImageView
+                    android:id="@+id/h4_icon"
+                    android:layout_width="22dp"
+                    android:layout_height="22dp"
+                    android:layout_marginTop="2dp"
+                    android:layout_marginBottom="2dp"
+                    android:src="@drawable/wx_clear_night"
+                    android:importantForAccessibility="no" />
+
+                <TextView
+                    android:id="@+id/h4_temp"
+                    style="@style/WidgetText"
+                    android:text="53°"
+                    android:textSize="13sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/note"
+            style="@style/WidgetText"
+            android:layout_width="match_parent"
+            android:layout_marginTop="4dp"
+            android:textSize="12sp"
+            android:visibility="gone" />
+    </LinearLayout>
+</FrameLayout>

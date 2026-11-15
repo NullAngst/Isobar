@@ -324,6 +324,12 @@ class MainActivity : AppCompatActivity() {
 
     /** Called from main.js so the status and navigation bar areas match the app theme. */
     inner class Bridge {
+        /** The app loaded new data or a widget setting changed. */
+        @JavascriptInterface
+        fun widgetsChanged() {
+            WidgetWorker.enqueue(applicationContext)
+        }
+
         @JavascriptInterface
         fun requestLocation() {
             runOnUiThread { this@MainActivity.requestLocation() }

@@ -20,6 +20,13 @@ map service and OpenStreetMap's Nominatim):
   grid point and answers fine on the next try.
 - Every cached answer remembers when it was last confirmed upstream, so the
   UI can say how old the data really is when a service stops answering.
+- Data requests (JSON and text) open a fresh connection every time. A phone
+  that slept or switched networks leaves pooled connections dead without
+  anyone noticing, and a request sent down one just hangs. Map tiles still
+  reuse connections, since there are hundreds of them.
+- A request that times out or loses its connection is tried once more, on a
+  fresh connection, before it counts as a failure. One stall never starts a
+  backoff; only a request that fails twice in a row does.
 - Long-lived answers (place lookups, NWS grid points, station lists) are kept
   on disk, so restarting the app doesn't refetch them.
 - Response bodies are size-capped and redirects are refused for the tile proxy.
@@ -41,18 +48,38 @@ from . import REPO_URL, __version__
 log = logging.getLogger("isobar.net")
 
 USER_AGENT = f"Isobar/{__version__} ({REPO_URL})"
-TIMEOUT = 15
+CONNECT_TIMEOUT = 10         # seconds to open a connection
+READ_TIMEOUT = 15            # seconds of silence allowed while waiting for data
+TIMEOUT = (CONNECT_TIMEOUT, READ_TIMEOUT)
+# Worst case for one request: two attempts, each connecting and then waiting.
+WORST_CASE = 2 * (CONNECT_TIMEOUT + READ_TIMEOUT)
 MAX_JSON_BYTES = 32 * 1024 * 1024
 MAX_TILE_BYTES = 8 * 1024 * 1024
 DISK_MIN_TTL = 3600          # answers kept at least this long also go to disk
 BACKOFF_FIRST = 20           # seconds; doubles per consecutive failure
 BACKOFF_MAX = 15 * 60
 
-_session = requests.Session()
-_session.headers.update({"User-Agent": USER_AGENT, "Accept-Encoding": "gzip, deflate"})
-_adapter = requests.adapters.HTTPAdapter(pool_connections=16, pool_maxsize=32, max_retries=0)
-_session.mount("https://", _adapter)
-_session.mount("http://", _adapter)
+def _make_session(close):
+    session = requests.Session()
+    session.headers.update({"User-Agent": USER_AGENT, "Accept-Encoding": "gzip, deflate"})
+    if close:
+        # The server closes the connection after answering, so nothing is
+        # left in the pool to go stale.
+        session.headers["Connection"] = "close"
+    adapter = requests.adapters.HTTPAdapter(pool_connections=16, pool_maxsize=32, max_retries=0)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+
+# Map tiles: kept-alive connections, since a radar loop is hundreds of requests.
+_session = _make_session(close=False)
+# Weather data and retries: a fresh connection every time.
+_fresh_session = _make_session(close=True)
+
+# Failures worth one more try on a fresh connection: timeouts, refused or
+# reset connections, and a body that stopped arriving partway.
+_TRANSIENT = (requests.ConnectionError, requests.Timeout, requests.exceptions.ChunkedEncodingError)
 
 
 class FetchError(Exception):
@@ -250,7 +277,7 @@ def _single_flight(key, fn):
             call = _Call()
             _inflight[key] = call
     if not leader:
-        if not call.event.wait(TIMEOUT * 2 + 5):
+        if not call.event.wait(WORST_CASE + 5):
             raise FetchError("timed out waiting for a shared request")
         if call.error is not None:
             raise call.error
@@ -282,8 +309,10 @@ def _read_capped(resp, limit):
     return b"".join(chunks)
 
 
-def _fetch(url, params, headers, entry, limit, allow_redirects=True):
-    """One upstream GET. Returns (status, body, response). 304 returns body None."""
+def _fetch(url, params, headers, entry, limit, allow_redirects=True, fresh=False):
+    """One upstream GET, tried a second time on a fresh connection if the first
+    attempt times out or loses its connection. Returns (status, body, response).
+    304 returns body None. HTTP error statuses are answers, so they aren't retried."""
     scope = _scope(url)
     wait = _blocked_for(scope)
     if wait:
@@ -296,13 +325,21 @@ def _fetch(url, params, headers, entry, limit, allow_redirects=True):
         if entry.modified:
             req_headers["If-Modified-Since"] = entry.modified
 
-    try:
-        resp = _session.get(url, params=params, headers=req_headers, timeout=TIMEOUT,
-                            stream=True, allow_redirects=allow_redirects)
-    except requests.RequestException as exc:
-        _record_failure(scope)
-        raise FetchError(f"{url}: {exc.__class__.__name__}") from exc
+    last = None
+    for attempt in (1, 2):
+        session = _fresh_session if (fresh or attempt > 1) else _session
+        try:
+            return _attempt(session, url, params, req_headers, entry, limit, allow_redirects, scope)
+        except _TRANSIENT as exc:
+            last = exc
+            log.info("%s: %s on attempt %s", scope, exc.__class__.__name__, attempt)
+    _record_failure(scope)
+    raise FetchError(f"{url}: {last.__class__.__name__}") from last
 
+
+def _attempt(session, url, params, req_headers, entry, limit, allow_redirects, scope):
+    resp = session.get(url, params=params, headers=req_headers, timeout=TIMEOUT,
+                       stream=True, allow_redirects=allow_redirects)
     with resp:
         status = resp.status_code
         if status == 304 and entry is not None:
@@ -316,6 +353,8 @@ def _fetch(url, params, headers, entry, limit, allow_redirects=True):
         if status != 200:
             # 4xx other than 429 is an answer about this request, not about the host.
             raise FetchError(f"{url}: HTTP {status}", status)
+        # Reading the body is inside the retry too: a stall partway through
+        # would otherwise skip the stale-copy fallback entirely.
         body = _read_capped(resp, limit)
         _record_success(scope)
         return 200, body, resp
@@ -327,7 +366,7 @@ def _stale_limit(ttl):
 
 
 def _cached_fetch(cache, key, url, params, headers, ttl, limit, decode, missing_ok=False,
-                  allow_redirects=True, check=None, before=None):
+                  allow_redirects=True, check=None, before=None, fresh=False):
     entry = cache.get(key)
     if entry is None and ttl >= DISK_MIN_TTL:
         entry = _disk_get(key)
@@ -340,7 +379,7 @@ def _cached_fetch(cache, key, url, params, headers, ttl, limit, decode, missing_
         try:
             if before is not None and not _blocked_for(_scope(url)):
                 before()
-            status, body, resp = _fetch(url, params, headers, entry, limit, allow_redirects)
+            status, body, resp = _fetch(url, params, headers, entry, limit, allow_redirects, fresh)
         except FetchError as exc:
             if missing_ok and exc.status in (404, 410):
                 miss = Entry(None, time.time() + min(ttl, 3600))
@@ -398,12 +437,12 @@ def get_json(url, params=None, ttl=300, headers=None, missing_ok=False, before=N
     before runs right before a real network request (not on cache hits)."""
     key = ("json", url, _params_key(params))
     return _cached_fetch(_json_cache, key, url, params, headers, ttl, MAX_JSON_BYTES, _decode_json, missing_ok,
-                         before=before)
+                         before=before, fresh=True)
 
 
 def get_text(url, params=None, ttl=300, headers=None):
     key = ("text", url, _params_key(params))
-    return _cached_fetch(_json_cache, key, url, params, headers, ttl, MAX_JSON_BYTES, _decode_text)
+    return _cached_fetch(_json_cache, key, url, params, headers, ttl, MAX_JSON_BYTES, _decode_text, fresh=True)
 
 
 def _image_only(resp):

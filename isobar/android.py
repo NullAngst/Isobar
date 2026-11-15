@@ -77,6 +77,20 @@ def check_alerts(files_dir, cache_dir):
     ])
 
 
+def widget_data(files_dir, cache_dir):
+    """What the home screen widgets show, as JSON (see widget.py). Called by
+    WidgetWorker and AlertWorker in the background, and after the app loads."""
+    _setup(files_dir, cache_dir)
+    from . import settings, widget
+
+    try:
+        return json.dumps(widget.collect(settings.load()))
+    except Exception as exc:  # noqa: BLE001  (a widget must always get something to draw)
+        log.warning("widget data failed: %s", exc)
+        return json.dumps({"place": "", "note": "Could not update", "colors": widget.colors_for("app", "system"),
+                           "alpha": 255, "alert": None})
+
+
 def channel_for(tier, loud=True):
     """Android notification channel for a tier: the loud critical one (if the
     user wants it), the warnings one, or the quieter one for everything else."""

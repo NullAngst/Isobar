@@ -25,8 +25,8 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Checks for new weather alerts in the background, about every 15 minutes
- * (the shortest interval Android allows for periodic work), and posts them as
- * notifications. The rules for what notifies live in Python (isobar/notify.py),
+ * (the shortest interval Android allows for periodic work), posts them as
+ * notifications, then refreshes the home screen widgets. The rules for what notifies live in Python (isobar/notify.py),
  * shared with the desktop tray, so both platforms behave the same.
  */
 class AlertWorker(context: Context, params: WorkerParameters) : Worker(context, params) {
@@ -39,6 +39,7 @@ class AlertWorker(context: Context, params: WorkerParameters) : Worker(context, 
                 .toString()
         } catch (e: Throwable) {
             Log.w(TAG, "alert check failed", e)
+            Widgets.refreshNow(applicationContext)
             return Result.retry()
         }
         val notices = try {
@@ -51,6 +52,8 @@ class AlertWorker(context: Context, params: WorkerParameters) : Worker(context, 
             val n = notices.getJSONObject(i)
             post(applicationContext, n.optString("title"), n.optString("body"), n.optString("channel", CHANNEL_ALERTS))
         }
+        // The alerts were just fetched, so the widgets get them at no extra cost.
+        Widgets.refreshNow(applicationContext)
         return Result.success()
     }
 

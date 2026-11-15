@@ -795,4 +795,7 @@ kbd {
 
 /* Settings drawer: rows with many choices wrap under their label instead of squeezing. */
 .drawer .set-row { flex-wrap: wrap; }
+/* Checkbox rows keep the box beside its text however long the text runs. */
+.drawer .set-row.switch { flex-wrap: nowrap; align-items: flex-start; }
+.drawer .set-row.switch input { margin-top: 2px; flex: none; }
 .drawer .seg button { white-space: nowrap; }

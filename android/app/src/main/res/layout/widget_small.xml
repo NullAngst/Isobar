@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Small widget (2x2, shrinks to 2x1): temperature, icon, condition, place, top alert.
+     Only views RemoteViews allows. Colors, text and visibility are set in WidgetRender.kt;
+     the text here is what the widget picker preview shows. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <ImageView
+        android:id="@+id/widget_bg"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:scaleType="fitXY"
+        android:src="@drawable/widget_shape"
+        android:importantForAccessibility="no" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:gravity="center_vertical"
+        android:paddingStart="14dp"
+        android:paddingEnd="12dp"
+        android:paddingTop="10dp"
+        android:paddingBottom="10dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <ImageView
+                android:id="@+id/wx_icon"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:src="@drawable/wx_partly_day"
+                android:importantForAccessibility="no" />
+
+            <TextView
+                android:id="@+id/temp"
+                style="@style/WidgetText"
+                android:layout_marginStart="6dp"
+                android:text="64°"
+                android:textSize="32sp" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/cond"
+            style="@style/WidgetText"
+            android:layout_width="match_parent"
+            android:text="Partly cloudy"
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/place"
+            style="@style/WidgetText"
+            android:layout_width="match_parent"
+            android:text="Isobar"
+            android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/alert"
+            style="@style/WidgetText"
+            android:layout_width="match_parent"
+            android:layout_marginTop="2dp"
+            android:maxLines="2"
+            android:singleLine="false"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+    </LinearLayout>
+</FrameLayout>

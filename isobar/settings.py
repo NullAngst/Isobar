@@ -46,6 +46,13 @@ DEFAULTS = {
     "autostart": False,         # start at login, hidden in the tray (desktop)
     "follow_location": False,   # Android: move "location" to where the phone is when the app opens
     "afd_changes": True,        # mark what changed since the previous discussion
+    # Android home screen widgets.
+    "widget_place": None,       # None follows "location"; or a {"name", "lat", "lon"} of its own
+    "widget_theme": "app",      # app (same as the app) | system | dark | light | midnight | verdigris | kawaii-light | kawaii-dark
+    "widget_bg": "solid",       # solid | translucent | clear
+    "widget_alerts": True,      # show warnings and watches for the widget's place
+    "widget_details": True,     # feels like, high and low, rain chance
+    "widget_hours": True,       # the next few hours, on the wide widget
     "location": None,           # {"name", "lat", "lon"}
     "saved": [],                # list of {"name", "lat", "lon", "notify"}
 }
@@ -76,6 +83,8 @@ ENUMS = {
     "units": {"us", "metric"},
     "clock": {"12", "24"},
     "theme": {"system", "dark", "light", "midnight", "verdigris", "kawaii-light", "kawaii-dark"},
+    "widget_theme": {"app", "system", "dark", "light", "midnight", "verdigris", "kawaii-light", "kawaii-dark"},
+    "widget_bg": {"solid", "translucent", "clear"},
     # "hourly" is the old name of the forecast view, kept so old files still load.
     "start_view": {"now", "forecast", "hourly", "radar", "outlooks", "alerts", "discussion"},
     "basemap": {"satellite", "auto", "dark", "light", "streets"},
@@ -123,7 +132,7 @@ def _number(value):
 
 def _valid(key, default, value):
     """Return the cleaned value, or raise ValueError if it doesn't fit."""
-    if key == "location":
+    if key in ("location", "widget_place"):
         if value is None:
             return None
         place = _place(value)

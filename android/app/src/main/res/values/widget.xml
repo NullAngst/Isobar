@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_small_name">Isobar</string>
+    <string name="widget_small_desc">Temperature, conditions and alerts for your place</string>
+    <string name="widget_wide_name">Isobar, with hours</string>
+    <string name="widget_wide_desc">Conditions, high and low, alerts and the next five hours</string>
+
+    <!-- Shared text look for the widgets. The faint shadow keeps text readable
+         on the "clear" background, over any wallpaper. -->
+    <style name="WidgetText">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:textColor">#FFE8EDF2</item>
+        <item name="android:singleLine">true</item>
+        <item name="android:ellipsize">end</item>
+        <item name="android:includeFontPadding">false</item>
+        <item name="android:shadowColor">#40000000</item>
+        <item name="android:shadowDx">0</item>
+        <item name="android:shadowDy">1</item>
+        <item name="android:shadowRadius">2</item>
+    </style>
+</resources>
