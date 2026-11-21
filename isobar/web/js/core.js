@@ -61,6 +61,17 @@ export function proxyUrl(url) {
   return `/proxy/tile?t=${encodeURIComponent(TOKEN)}&u=${encodeURIComponent(url)}`;
 }
 
+// A local URL an image or tile layer can load, with the session token in the
+// query, since an image request can't send headers. Leaflet's {z}/{x}/{y}
+// placeholders in the path are left alone.
+export function tokenUrl(path, params = {}) {
+  const query = new URLSearchParams({ t: TOKEN });
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null) query.set(key, value);
+  }
+  return `${path}?${query}`;
+}
+
 let saveTimer = null;
 let pending = {};
 

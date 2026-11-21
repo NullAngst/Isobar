@@ -5,6 +5,7 @@ import math
 import os
 import re
 import threading
+from urllib.parse import urlparse
 
 from .paths import config_dir
 
@@ -55,6 +56,10 @@ DEFAULTS = {
     "widget_hours": True,       # the next few hours, on the wide widget
     "location": None,           # {"name", "lat", "lon"}
     "saved": [],                # list of {"name", "lat", "lon", "notify"}
+    # Isobar Servers, in priority order: {"label", "address", "key", "enabled"}.
+    # Empty means Isobar talks to the providers directly, as it always has.
+    "servers": [],
+    "servers_direct": True,     # go direct to the providers when every server fails
 }
 
 # Reentrant, since save() holds it across its own load() so two saves at
@@ -106,6 +111,37 @@ RANGES = {
 # Settings that hold whole numbers.
 INTEGERS = {"quiet_start", "quiet_end"}
 MAX_SAVED = 50
+MAX_SERVERS = 10
+SERVER_KEY = re.compile(r"[!-~]{1,200}")       # printable, no spaces
+SERVER_LABEL = re.compile(r"[^\x00-\x1f\x7f]{1,40}")
+
+
+def _server(value):
+    """A cleaned server entry, or None if it can't be used. The address keeps
+    only scheme, host and port: http is allowed for a server on the LAN."""
+    if not isinstance(value, dict):
+        return None
+    address = str(value.get("address") or "").strip()
+    parsed = urlparse(address)
+    if (parsed.scheme not in ("https", "http") or not parsed.hostname or parsed.username or parsed.password
+            or parsed.query or parsed.fragment or parsed.path not in ("", "/") or len(address) > 200
+            or any(c in address for c in " \t\r\n")):
+        return None
+    try:
+        port = parsed.port
+    except ValueError:
+        return None
+    host = parsed.hostname
+    if ":" in host:
+        host = f"[{host}]"
+    address = f"{parsed.scheme}://{host}{f':{port}' if port else ''}"
+    key = str(value.get("key") or "").strip()
+    if key and not SERVER_KEY.fullmatch(key):
+        return None
+    label = str(value.get("label") or "").strip()
+    if not SERVER_LABEL.fullmatch(label):
+        label = parsed.hostname[:40]
+    return {"label": label, "address": address, "key": key, "enabled": value.get("enabled") is not False}
 
 
 def _place(value, keep_notify=False):
@@ -144,6 +180,10 @@ def _valid(key, default, value):
             raise ValueError(key)
         places = [p for p in (_place(v, keep_notify=True) for v in value[:MAX_SAVED]) if p]
         return places
+    if key == "servers":
+        if not isinstance(value, list):
+            raise ValueError(key)
+        return [s for s in (_server(v) for v in value[:MAX_SERVERS]) if s]
     if key == "radar_options":
         if not isinstance(value, dict):
             raise ValueError(key)
@@ -204,7 +244,7 @@ def save(patch: dict) -> dict:
     with _lock:
         merged = _merge(load(), patch)
         tmp = _file().with_suffix(".tmp")
-        # Owner-only: the file can hold a CARTO key and your saved places.
+        # Owner-only: the file can hold a CARTO key, server keys and your saved places.
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(json.dumps(merged, indent=2))

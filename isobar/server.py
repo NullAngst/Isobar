@@ -17,22 +17,30 @@ import os
 import secrets
 import sys
 import threading
+import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import __version__, autostart, settings, sources
+from . import __version__, autostart, servers, settings, sources
 from .net import FetchError, get_bytes
 from .paths import web_dir
 
 log = logging.getLogger("isobar.server")
 
-TILE_HOSTS = {
-    "mesonet.agron.iastate.edu",
-    "mesonet1.agron.iastate.edu",
-    "mesonet2.agron.iastate.edu",
-    "mesonet3.agron.iastate.edu",
-}
+# IEM serves tiles from this one host. The numbered hosts (mesonet1 to 3)
+# now answer with a redirect here, without the CORS header a page needs.
+TILE_HOSTS = {"mesonet.agron.iastate.edu"}
+# A redirect is followed when it stays on IEM's own domain, so the next host
+# move degrades to the proxy instead of breaking every radar product at once.
+TILE_REDIRECT_DOMAIN = ".agron.iastate.edu"
+
+
+def tile_redirect_ok(url):
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    return (parsed.scheme == "https" and parsed.port in (None, 443) and not parsed.username
+            and not parsed.password and (host.endswith(TILE_REDIRECT_DOMAIN)))
 
 MAP_HOSTS = (
     "https://*.agron.iastate.edu https://*.basemaps.cartocdn.com https://server.arcgisonline.com"
@@ -188,6 +196,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._error(401, "bad token")
 
         route = self.ROUTES.get((method, path))
+        if route is None and method == "GET" and path.startswith("/proxy/mrms/"):
+            route = Handler.proxy_mrms
         if route is None:
             return self._error(404, "no such endpoint")
         try:
@@ -253,6 +263,9 @@ class Handler(BaseHTTPRequestHandler):
                     patch.pop("autostart")
                     warning = f"Could not change start at login: {exc}"
         data = settings.save(patch)
+        if "servers" in patch or "servers_direct" in patch:
+            # A changed list or key starts every request fresh.
+            servers.forget_memo()
         if warning:
             data = {**data, "warning": warning}
         self._json(data)
@@ -296,6 +309,7 @@ class Handler(BaseHTTPRequestHandler):
             "alerts": alerts,
             "ok": ok,
             "age": sources.alerts_age(lat, lon),
+            "source": sources.provenance("alerts", lat, lon),
             "mcds": sources.mcds_here(lat, lon),
         })
 
@@ -366,8 +380,50 @@ class Handler(BaseHTTPRequestHandler):
         if (len(target) > 1024 or parsed.scheme != "https" or parsed.hostname not in TILE_HOSTS
                 or parsed.port not in (None, 443) or parsed.username or parsed.password):
             raise ValueError("tile host not allowed")
-        body, ctype = get_bytes(target, ttl=120 if "-0/" in target or "/cache/" in target else 3600)
+        try:
+            body, ctype = get_bytes(target, ttl=120 if "-0/" in target or "/cache/" in target else 3600,
+                                    may_follow=tile_redirect_ok)
+        except FetchError as exc:
+            # Named in the log so a broken radar product can be traced to its URL and status.
+            # Once a minute at warning level; an outage fails hundreds of tiles.
+            now = time.monotonic()
+            if now - getattr(self.server, "tile_warned", 0.0) > 60:
+                self.server.tile_warned = now
+                log.warning("radar tile failed: %s (more failures this minute are logged at debug level)", exc)
+            else:
+                log.debug("radar tile failed: %s", exc)
+            raise
         self._send(200, body, ctype, {"Cache-Control": "max-age=60", "Access-Control-Allow-Origin": "*"})
+
+    # ------------------------------------------------------------ Isobar Servers
+
+    def api_servers_test(self, qs):
+        body = self._body_json()
+        if not isinstance(body, dict):
+            raise ValueError("expected an object")
+        address = str(body.get("address") or "")[:300]
+        key = str(body.get("key") or "")[:300]
+        self._json(servers.test(address, key))
+
+    def api_servers_state(self, qs):
+        self._json({"servers": servers.states()})
+
+    def api_radar_mrms(self, qs):
+        """MRMS frames from the first server that runs radar, for when IEM fails."""
+        index = _str(qs, "s")
+        index = int(index) if index is not None and index.isdigit() else None
+        found = servers.radar_frames(index)
+        self._json(found or {"frames": []})
+
+    MRMS_PATH = re.compile(r"/proxy/mrms/(\d{8}-\d{6})/(\d{1,2})/(\d{1,4})/(\d{1,4})\.png")
+
+    def proxy_mrms(self, qs):
+        match = self.MRMS_PATH.fullmatch(urlparse(self.path).path)
+        index = _str(qs, "s", "")
+        if not match or not index.isdigit():
+            raise ValueError("bad radar tile")
+        body, ctype = servers.radar_tile(int(index), *match.groups())
+        self._send(200, body, ctype, {"Cache-Control": "max-age=600", "Access-Control-Allow-Origin": "*"})
 
     ROUTES = {
         ("GET", "/api/version"): api_version,
@@ -392,6 +448,9 @@ class Handler(BaseHTTPRequestHandler):
         ("GET", "/api/tropical"): api_tropical,
         ("POST", "/api/open"): api_open,
         ("POST", "/api/status"): api_status,
+        ("POST", "/api/servers/test"): api_servers_test,
+        ("GET", "/api/servers/state"): api_servers_state,
+        ("GET", "/api/radar/mrms"): api_radar_mrms,
         ("GET", "/proxy/tile"): proxy_tile,
     }
 

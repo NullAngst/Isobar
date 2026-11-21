@@ -25,6 +25,10 @@ Type in a city, ZIP code or `lat, lon` (or tap "Use my location" on Android) and
 - Dark, light, midnight, verdigris, Kawaii Light and Kawaii Dark themes, or follow the system. US or metric units, 12 or 24 hour clock, saved places.
 - **Honest timestamps**: "Updated" in the top bar is when Open-Meteo last confirmed the forecast. If it stops answering, that turns into "Forecast from 45 min ago" in red. The radar time turns red if the newest scan is more than 15 minutes old.
 
+## Isobar Servers (optional)
+
+Isobar can also pull from one or more Isobar Servers, added under Settings, Servers, so that when a weather service goes down you see slightly old data instead of "Can't connect". A server is a stack anyone can host for themselves and their friends, with its own copy of the forecast models. With no servers set, Isobar talks to the weather services directly, the same as always. How to host one is in [Server/README.md](Server/README.md).
+
 ## Download and run
 
 Grab the archive for your system from the [Releases](https://github.com/NullAngst/Isobar/releases) page.
@@ -201,7 +205,8 @@ Isobar runs a small web server on your machine to show its UI, so it's locked do
 - **A strict Content-Security-Policy** limits the page to its own scripts. The only outside hosts it may load from are the radar, map tile and NESDIS satellite servers. Text from weather services is always escaped before display.
 - **Tile servers are sent no Referer header**, so they don't learn the local address or the token.
 - **Links only ever open in your browser, and only web links** (http and https). Anything else, like a file path or a custom protocol, is dropped.
-- **The tile proxy fallback only fetches images from the Iowa Environmental Mesonet.** It refuses redirects and caps response sizes.
+- **The tile proxy fallback only fetches images from the Iowa Environmental Mesonet.** It follows a redirect only when it stays on IEM's own domain (agron.iastate.edu), and caps response sizes.
+- **Isobar Server keys stay in the settings file**, readable only by you (on Android, inside the app's private storage). They're sent only to the server they belong to, in a header, and the Settings screen masks them.
 - **Settings are validated before they're saved**: choices have to be one of the known answers, numbers are clamped to sane ranges, and the settings file is readable only by you, since it can hold your CARTO key.
 - **Map popups for storm reports, storm cells, hurricane cones and mesoscale discussions are built as page elements, not HTML strings**, so text in a report can never run as code.
 - **One copy per user.** Starting Isobar again raises the window that's already running, so there's never a second set of notifications. The check uses a local socket only your user can reach.
@@ -229,12 +234,15 @@ The Android build needs a signing key in the repo's secrets first. That's a one-
 2. Add an entry to `changes.md`.
 3. Commit and push, or upload the changed files through the web UI.
 4. Go to Releases, then "Draft a new release".
-5. Under "Choose a tag", type a new tag like `v1.6.0` and pick "Create new tag on publish". Give the release a title and notes.
+5. Under "Choose a tag", type a new tag like `v1.7.0` and pick "Create new tag on publish". Give the release a title and notes.
 6. Click "Publish release". Nothing builds yet, which is expected.
 7. Go to Actions and click "Build and release" in the list on the left.
 8. Click "Run workflow". Under "Use workflow from", switch to the Tags tab and pick the tag you just made. Click the green "Run workflow".
 9. Wait. The checks run first, then all four builds in parallel, roughly 10 to 15 minutes in all. If the checks fail, nothing builds.
 10. Refresh the release page. The `.AppImage` and its `.zsync` update file, the `.tar.gz`, two `.zip` files, the `.apk` and its `.apk.sigstore.json` attestation are attached.
+
+11. Server images, if anything under `Server/` changed: bump `__version__` in `Server/relay/isobar_relay/__init__.py` to the same version, add an entry to `Server/changes.md`, then in Actions click "Build server images", "Run workflow", and pick the same tag. It builds the relay, geocoding and radar images and pushes them to the GitHub container registry as `latest` and the tag.
+11.5. The first time only: GitHub makes new container packages private. Go to your profile, Packages, open each of `isobar-relay`, `isobar-geocoding` and `isobar-radar`, then Package settings, Change visibility, Public. Otherwise nobody else can pull them.
 
 If the release job fails right away, read its message. It says whether you ran it on a branch instead of a tag, whether no release exists for that tag yet, or whether the tag doesn't match the version in `isobar/__init__.py`. Running it again on the same tag replaces the files that are already attached, so a rerun after a failed build is safe.
 
@@ -246,7 +254,7 @@ The workflow does this on its own. To do it on your machine, from a source check
 
 1. Install PyInstaller: `pip install pyinstaller`
 2. Build the app folder: `pyinstaller --noconfirm --clean isobar.spec`
-3. Wrap it: `bash packaging/appimage/build-appimage.sh v1.6.0` (the last part is only the label in the file name)
+3. Wrap it: `bash packaging/appimage/build-appimage.sh v1.7.0` (the last part is only the label in the file name)
 
 The AppImage and its `.zsync` land in the repo root. The script downloads `appimagetool` from its "continuous" release the first time, so it always gets the current one. The tradeoff is that nothing checks that download against a known hash. If you already have `appimagetool`, point the script at it with `APPIMAGETOOL=/path/to/appimagetool` and it skips the download.
 

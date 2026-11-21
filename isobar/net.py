@@ -29,7 +29,8 @@ map service and OpenStreetMap's Nominatim):
   backoff; only a request that fails twice in a row does.
 - Long-lived answers (place lookups, NWS grid points, station lists) are kept
   on disk, so restarting the app doesn't refetch them.
-- Response bodies are size-capped and redirects are refused for the tile proxy.
+- Response bodies are size-capped. The tile proxy only follows a redirect
+  when the caller approves where it leads.
 """
 
 import email.utils
@@ -39,7 +40,7 @@ import logging
 import threading
 import time
 from collections import OrderedDict
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import requests
 
@@ -83,9 +84,11 @@ _TRANSIENT = (requests.ConnectionError, requests.Timeout, requests.exceptions.Ch
 
 
 class FetchError(Exception):
-    def __init__(self, message, status=None):
+    def __init__(self, message, status=None, location=None):
         super().__init__(message)
         self.status = status
+        # Where a refused redirect pointed, so a caller can decide to follow it.
+        self.location = location
 
 
 # ---------------------------------------------------------------- cache
@@ -350,6 +353,8 @@ def _attempt(session, url, params, req_headers, entry, limit, allow_redirects, s
             if not soft:
                 _record_failure(scope, resp)
             raise FetchError(f"{url}: HTTP {status}", status)
+        if status in (301, 302, 303, 307, 308):
+            raise FetchError(f"{url}: HTTP {status}", status, resp.headers.get("Location"))
         if status != 200:
             # 4xx other than 429 is an answer about this request, not about the host.
             raise FetchError(f"{url}: HTTP {status}", status)
@@ -451,14 +456,29 @@ def _image_only(resp):
         raise FetchError(f"{resp.url}: not an image ({ctype or 'no type'})")
 
 
-def get_bytes(url, ttl=120):
+MAX_REDIRECTS = 3
+
+
+def get_bytes(url, ttl=120, may_follow=None, headers=None):
     """Image fetch used by the tile proxy. Returns (bytes, content_type).
-    Redirects are refused so an allowed host can't bounce the proxy elsewhere,
-    and anything that isn't an image is rejected."""
-    key = ("bytes", url)
+    Redirects are only followed when may_follow(next_url) says yes, so an
+    allowed host can't bounce the proxy somewhere else. Anything that isn't
+    an image is rejected."""
     decode = lambda body, resp: (body, resp.headers.get("Content-Type", "image/png"))  # noqa: E731
-    return _cached_fetch(_bytes_cache, key, url, None, None, ttl, MAX_TILE_BYTES, decode,
-                         allow_redirects=False, check=_image_only)
+    for _ in range(MAX_REDIRECTS + 1):
+        key = ("bytes", url)
+        try:
+            return _cached_fetch(_bytes_cache, key, url, None, headers, ttl, MAX_TILE_BYTES, decode,
+                                 allow_redirects=False, check=_image_only)
+        except FetchError as exc:
+            if exc.status not in (301, 302, 303, 307, 308) or not exc.location or may_follow is None:
+                raise
+            nxt = urljoin(url, exc.location)
+            if not may_follow(nxt):
+                raise FetchError(f"{url}: redirect to {nxt} refused", exc.status) from exc
+            log.info("tile moved: %s -> %s", url, nxt)
+            url = nxt
+    raise FetchError(f"{url}: too many redirects")
 
 
 # Nominatim allows at most one request per second per application.

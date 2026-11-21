@@ -10,10 +10,12 @@ service and the satellite loop from NESDIS.
 
 import math
 import re
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
-from . import geo
+from . import geo, servers
 from .net import FetchError, fetched_at, get_json, polite_wait
 
 OPEN_METEO = "https://api.open-meteo.com/v1/forecast"
@@ -75,6 +77,42 @@ def _nws_url(url):
     return None
 
 
+# ---------------------------------------------------------------- where data came from
+
+# When the app's own copy of a dataset counts as old, for data fetched
+# directly. Data from an Isobar Server carries the server's own verdict.
+FORECAST_STALE = 30 * 60
+ALERTS_STALE = 5 * 60
+OBS_STALE = 90 * 60
+
+_seen = {}
+_seen_lock = threading.Lock()
+
+
+def _remember(kind, lat, lon, got):
+    with _seen_lock:
+        if len(_seen) > 500:
+            _seen.clear()
+        _seen[(kind, _r(lat), _r(lon))] = got
+    return got
+
+
+def provenance(kind, lat, lon):
+    """{"fetched", "via", "source", "stale", "down_since"} for the last answer
+    of this kind for this place, or None."""
+    with _seen_lock:
+        got = _seen.get((kind, _r(lat), _r(lon)))
+    return got.info() if got is not None else None
+
+
+def _direct(url, params=None, ttl=300, headers=None, missing_ok=False, before=None):
+    """The provider call, as servers.fetch wants it: returns (value, fetched_at)."""
+    def run():
+        value = get_json(url, params, ttl=ttl, headers=headers, missing_ok=missing_ok, before=before)
+        return value, fetched_at(url, params)
+    return run
+
+
 # ---------------------------------------------------------------- locations
 
 def geocode(query):
@@ -93,7 +131,7 @@ def geocode(query):
     params = {"name": query, "count": 8, "language": "en", "format": "json"}
     if re.fullmatch(r"\d{5}", query):
         params["countryCode"] = "US"
-    data = get_json(OPEN_METEO_GEO, params, ttl=86400) or {}
+    data = servers.fetch("/v1/search", params, _direct(OPEN_METEO_GEO, params, ttl=86400), ttl=86400).value or {}
     out = []
     for item in data.get("results") or []:
         if item.get("latitude") is None or item.get("longitude") is None:
@@ -168,12 +206,22 @@ def _forecast_params(lat, lon):
     }
 
 
+def forecast_got(lat, lon):
+    """The forecast, from the first server with a fresh copy or from Open-Meteo, with its source."""
+    params = _forecast_params(lat, lon)
+    got = servers.fetch("/v1/forecast", params, _direct(OPEN_METEO, params, ttl=600), ttl=600,
+                        stale_after=FORECAST_STALE)
+    return _remember("forecast", lat, lon, got)
+
+
 def open_meteo(lat, lon):
-    data = get_json(OPEN_METEO, _forecast_params(lat, lon), ttl=600)
-    return split_yesterday(data)
+    return split_yesterday(forecast_got(lat, lon).value)
 
 
 def forecast_age(lat, lon):
+    seen = provenance("forecast", lat, lon)
+    if seen is not None:
+        return seen["fetched"]
     return fetched_at(OPEN_METEO, _forecast_params(lat, lon))
 
 
@@ -231,8 +279,10 @@ def air_quality(lat, lon):
         "current": "us_aqi,european_aqi,pm2_5,pm10,ozone",
         "timezone": "auto",
     }
-    data = get_json(OPEN_METEO_AIR, params, ttl=1800) or {}
-    return data.get("current")
+    got = servers.fetch("/v1/air-quality", params, _direct(OPEN_METEO_AIR, params, ttl=1800), ttl=1800,
+                        need="air_quality")
+    _remember("air", lat, lon, got)
+    return (got.value or {}).get("current")
 
 
 # ---------------------------------------------------------------- NWS
@@ -356,13 +406,37 @@ def alert_tier(alert):
     return "normal"
 
 
+def alerts_got(lat, lon):
+    """The NWS alert collection for a point, from a server's national snapshot
+    or from the NWS point filter, with its source."""
+    params = alerts_params(lat, lon)
+    got = servers.fetch("/v1/alerts", {"lat": _r(lat), "lon": _r(lon)},
+                        _direct(f"{NWS}/alerts/active", params, ttl=60, headers=NWS_HEADERS),
+                        ttl=60, stale_after=ALERTS_STALE)
+    return _remember("alerts", lat, lon, got)
+
+
 def nws_alerts(lat, lon):
-    data = get_json(
-        f"{NWS}/alerts/active",
-        alerts_params(lat, lon),
-        ttl=60,
-        headers=NWS_HEADERS,
-    ) or {}
+    return parse_alerts(alerts_got(lat, lon).value)
+
+
+VTEC_RE = re.compile(r"/[OTEX]\.[A-Z]{3}\.([A-Z]{4})\.([A-Z]{2})\.([A-Z])\.(\d{4})\.")
+
+
+def vtec_events(params):
+    """Event keys like KFFC.TO.W.0042 from an alert's VTEC strings. The same
+    event keeps its key across updates and across sources, so the notifier can
+    tell an update from a new alert even when its id changes."""
+    out = []
+    for line in (params or {}).get("VTEC") or []:
+        match = VTEC_RE.search(str(line))
+        if match:
+            out.append(".".join(match.groups()))
+    return out
+
+
+def parse_alerts(data):
+    data = data or {}
     out = []
     for feat in data.get("features") or []:
         p = feat.get("properties") or {}
@@ -387,6 +461,7 @@ def nws_alerts(lat, lon):
             "references": [r.get("identifier") for r in (p.get("references") or [])[:20]
                            if isinstance(r, dict) and r.get("identifier")],
             "geometry": feat.get("geometry"),
+            "events": vtec_events(p.get("parameters")),
             "tags": alert_tags(p.get("parameters")),
             "flags": alert_flags(p.get("event"), p.get("headline"), p.get("description")),
         })
@@ -398,8 +473,59 @@ def nws_alerts(lat, lon):
 
 
 def alerts_age(lat, lon):
-    """When the cached alerts for this point were last confirmed by the NWS."""
+    """When the alerts for this point were last confirmed upstream."""
+    seen = provenance("alerts", lat, lon)
+    if seen is not None:
+        return seen["fetched"]
     return fetched_at(f"{NWS}/alerts/active", alerts_params(lat, lon))
+
+
+def observation(lat, lon, stations_url=None, point_future=None):
+    """The latest observation from the nearest reporting station: from a
+    server, which looks the station up itself, or from the NWS using the
+    point's station list (waiting on point_future for it if need be)."""
+    def direct():
+        url = stations_url
+        if url is None and point_future is not None:
+            try:
+                url = (point_future.result() or {}).get("stations")
+            except Exception:  # noqa: BLE001  (the point lookup's own error is reported elsewhere)
+                url = None
+        if not _nws_url(url):
+            raise FetchError("no NWS station list for this point")
+        return nws_observation(url), time.time()
+
+    got = servers.fetch("/v1/obs", {"lat": _r(lat), "lon": _r(lon)}, direct, ttl=600, stale_after=OBS_STALE)
+    _remember("obs", lat, lon, got)
+    if got.via == "direct":
+        return got.value
+    feature = got.value
+    if not isinstance(feature, dict):
+        return None
+    p = feature.get("properties") or {}
+    sid = str(p.get("stationId") or str(p.get("station") or "").rstrip("/").rsplit("/", 1)[-1])
+    return _obs(p, sid, p.get("stationName"))
+
+
+def _obs(p, sid, name):
+    temp = (p.get("temperature") or {}).get("value")
+    if temp is None:
+        return None
+    val = lambda key: (p.get(key) or {}).get("value")  # noqa: E731
+    return {
+        "station": sid,
+        "name": name,
+        "time": p.get("timestamp"),
+        "text": p.get("textDescription"),
+        "temp_c": temp,
+        "dew_c": val("dewpoint"),
+        "rh": val("relativeHumidity"),
+        "wind_kmh": val("windSpeed"),
+        "wind_dir": val("windDirection"),
+        "gust_kmh": val("windGust"),
+        "pressure_pa": val("barometricPressure"),
+        "visibility_m": val("visibility"),
+    }
 
 
 def nws_observation(stations_url):
@@ -417,25 +543,9 @@ def nws_observation(stations_url):
             data = get_json(f"{NWS}/stations/{sid}/observations/latest", ttl=300, headers=NWS_HEADERS)
         except FetchError:
             continue
-        p = (data or {}).get("properties") or {}
-        temp = (p.get("temperature") or {}).get("value")
-        if temp is None:
-            continue
-        val = lambda key: (p.get(key) or {}).get("value")  # noqa: E731
-        return {
-            "station": sid,
-            "name": sp.get("name"),
-            "time": p.get("timestamp"),
-            "text": p.get("textDescription"),
-            "temp_c": temp,
-            "dew_c": val("dewpoint"),
-            "rh": val("relativeHumidity"),
-            "wind_kmh": val("windSpeed"),
-            "wind_dir": val("windDirection"),
-            "gust_kmh": val("windGust"),
-            "pressure_pa": val("barometricPressure"),
-            "visibility_m": val("visibility"),
-        }
+        found = _obs((data or {}).get("properties") or {}, sid, sp.get("name"))
+        if found is not None:
+            return found
     return None
 
 
@@ -489,6 +599,7 @@ def weather_bundle(lat, lon):
     Partial failure is fine: missing parts are reported in "errors"."""
     errors = []
     covered = in_nws_area(lat, lon)
+    use_servers = bool(servers.configured())
     f_om = _pool.submit(open_meteo, lat, lon)
     f_air = _pool.submit(air_quality, lat, lon)
     f_now = _pool.submit(nowcast, lat, lon)
@@ -496,6 +607,8 @@ def weather_bundle(lat, lon):
     # Alerts don't depend on the /points lookup, so a failing one can't hide them.
     f_alerts = _pool.submit(nws_alerts, lat, lon) if covered else None
     f_mcd = _pool.submit(mcds_here, lat, lon) if covered else None
+    # A server finds the nearest station itself, so observations don't wait on /points either.
+    f_obs = _pool.submit(observation, lat, lon, None, f_pt) if covered and use_servers else None
 
     point = None
     try:
@@ -503,10 +616,11 @@ def weather_bundle(lat, lon):
     except Exception as exc:  # noqa: BLE001
         errors.append(f"NWS point lookup: {exc}")
 
-    f_periods = f_obs = None
+    f_periods = None
     if point:
         f_periods = _pool.submit(nws_periods, point["forecast"])
-        f_obs = _pool.submit(nws_observation, point["stations"])
+        if f_obs is None:
+            f_obs = _pool.submit(observation, lat, lon, point["stations"])
         if f_alerts is None:
             f_alerts = _pool.submit(nws_alerts, lat, lon)
             f_mcd = _pool.submit(mcds_here, lat, lon)
@@ -529,22 +643,31 @@ def weather_bundle(lat, lon):
         now = f_now.result()
     except Exception:  # noqa: BLE001
         now = None  # the rain timing line is a nicety; no error for it
+    air = take(f_air, "Air quality")
+    obs = take(f_obs, "Observation")
+    sources = {kind: provenance(kind, lat, lon) for kind in ("forecast", "alerts", "obs", "air")}
+    if f_alerts is None:
+        sources["alerts"] = None
     return {
         "forecast": forecast,
         "nowcast": now,
-        "air": take(f_air, "Air quality"),
+        "air": air,
         "nws": point,
         # True for any point the NWS covers, whether or not /points answered.
         "us": covered or bool(point),
         "periods": take(f_periods, "NWS forecast", []),
         "alerts": alerts,
         "alerts_ok": alerts_ok,
-        "obs": take(f_obs, "Observation"),
+        "obs": obs,
         "mcds": take(f_mcd, "Mesoscale discussions", []),
         "ages": {
             "forecast": forecast_age(lat, lon),
             "alerts": alerts_age(lat, lon) if f_alerts is not None else None,
         },
+        # Where each part came from ("direct" or a server's label), whether it's stale,
+        # and, for alerts from a server, since when its upstream has been down.
+        "sources": sources,
+        "servers": use_servers,
         "errors": errors,
     }
 
@@ -775,8 +898,52 @@ def wwa(sig, bbox, zoom):
     zoom = int(zoom)
     features = []
     for w, e in lon_ranges(west, east):
-        features += _wwa_box(sig, south, w, north, e, zoom)
+        from_server = _wwa_from_servers(sig, south, w, north, e)
+        features += from_server if from_server is not None else _wwa_box(sig, south, w, north, e, zoom)
     return {"type": "FeatureCollection", "features": features}
+
+
+def _wwa_from_servers(sig, south, west, north, east):
+    """Warning, watch or advisory shapes from a server's alert snapshot, in the
+    same form as the NOAA map service's, or None to go to NOAA instead."""
+    if not servers.configured():
+        return None
+    bbox = f"{max(-180.0, west):g},{max(-90.0, south):g},{min(180.0, east):g},{min(90.0, north):g}"
+    try:
+        got = servers.fetch("/v1/alerts/map", {"bbox": bbox}, None, ttl=60)
+    except FetchError:
+        if servers.direct_allowed():
+            return None
+        raise
+    if got.stale and servers.direct_allowed():
+        return None
+    return wwa_from_alerts(got.value, sig)
+
+
+def wwa_from_alerts(collection, sig):
+    out = []
+    for feat in (collection or {}).get("features") or []:
+        p = feat.get("properties") or {}
+        for line in (p.get("parameters") or {}).get("VTEC") or []:
+            match = VTEC_RE.search(str(line))
+            if not match or match.group(3) != sig:
+                continue
+            office = match.group(1)
+            out.append({
+                "type": "Feature",
+                "geometry": feat.get("geometry"),
+                "properties": {
+                    "phenom": match.group(2),
+                    "sig": sig,
+                    "event": p.get("event") or "",
+                    "wfo": office[1:] if office.startswith("K") else office,
+                    "issued": p.get("sent"),
+                    "expires": p.get("ends") or p.get("expires"),
+                    "url": None,
+                },
+            })
+            break
+    return out
 
 
 def _wwa_box(sig, south, west, north, east, zoom):
@@ -927,7 +1094,7 @@ def model_grid(bbox, nx, ny):
         "timezone": "UTC",
     }
     # Open-Meteo's "current" values move every 15 minutes; 30 is plenty for a map overlay.
-    data = get_json(OPEN_METEO, params, ttl=1800)
+    data = servers.fetch("/v1/forecast", params, _direct(OPEN_METEO, params, ttl=1800), ttl=1800).value
     if isinstance(data, dict):
         data = [data]
     temp, speed, direction, gust = [], [], [], []

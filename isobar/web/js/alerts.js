@@ -3,7 +3,7 @@
 
 import { state, api, el, emit, openExternal, saveSettings } from './core.js';
 import { uiIcon } from './icons.js';
-import { instant, ago, eventColor, MCD_COLOR, countdown, alertTagList, ageText } from './util.js';
+import { instant, ago, eventColor, MCD_COLOR, countdown, alertTagList, ageText, sourceLine } from './util.js';
 
 // Alerts are cached for a minute on the server. Older than this means the NWS
 // stopped answering and an old copy is standing in.
@@ -15,7 +15,20 @@ export function alertHealthNote(data) {
   if (!data || !data.us) return null;
   const age = data.ages && data.ages.alerts;
   const seconds = age ? Date.now() / 1000 - age : null;
+  const src = data.servers && data.sources && data.sources.alerts;
   let text = null;
+  if (src && src.via !== 'direct' && (src.stale || src.down_since || src.source === 'iem')) {
+    // From an Isobar Server: it says how old its copy is and since when the NWS feed has been down.
+    const since = src.down_since ? instant(new Date(src.down_since * 1000).toISOString()) : null;
+    if (src.stale) {
+      text = since
+        ? `Alert feed unavailable since ${since}. New warnings may be missing.`
+        : `Alerts as of ${ageText(seconds || 0)} ago. New warnings may be missing.`;
+    } else if (src.source === 'iem') {
+      text = `The NWS alert feed is down${since ? ` since ${since}` : ''}, so these come from the Iowa Environmental Mesonet's backup list. Statements and full alert text may be missing.`;
+    }
+    if (text) return el('div', { class: 'health', role: 'status' }, el('span', { html: uiIcon('alerts', 16) }), text);
+  }
   if (data.alerts_ok === false && !age) {
     text = 'Alerts could not be loaded. The NWS is not answering, so active alerts may be missing.';
   } else if (data.alerts_ok === false || (seconds !== null && seconds > ALERTS_STALE_S)) {
@@ -119,6 +132,8 @@ export function renderAlerts(root) {
   }
   const health = alertHealthNote(data);
   if (health) root.append(health);
+  const src = data.servers && data.sources && data.sources.alerts;
+  if (src) root.append(el('p', { class: 'muted small source-line' }, sourceLine(src)));
   const alerts = data.alerts || [];
   const mcds = data.mcds || [];
   if (!alerts.length && !mcds.length) {

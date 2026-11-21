@@ -1,0 +1,152 @@
+# Isobar Server: the whole stack.
+#
+#   docker compose up -d          (from the folder holding this file, .env and keys.txt)
+#
+# or paste this into a new Portainer stack and add the .env settings there.
+# Only the relay is reachable from outside, through your HTTPS proxy, on
+# RELAY_PORT. Everything else talks on the stack's own network.
+#
+# Every image runs untagged, so "docker compose pull" always brings the
+# newest. The tradeoff: an upstream change (Open-Meteo above all) can break
+# something without warning. maintenance.md says what to check.
+
+name: isobar-weather
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+# Open-Meteo: one official image, run as the API and as one sync worker per
+# model, all on the same om-data volume. A stall in one model's download
+# never holds up the others.
+x-open-meteo: &open-meteo
+  image: ghcr.io/open-meteo/open-meteo
+  restart: unless-stopped
+  volumes:
+    - om-data:/app/data
+  networks: [isobar]
+  logging: *logging
+  environment:
+    LOG_LEVEL: info
+
+services:
+  open-meteo-api:
+    <<: *open-meteo
+    command: ["serve", "--env", "production", "--hostname", "0.0.0.0", "--port", "8080"]
+    healthcheck:
+      # The image has bash but no curl, so the check speaks HTTP over bash's /dev/tcp.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /v1/forecast?latitude=39&longitude=-98&current=temperature_2m&models=ncep_gfs_global HTTP/1.0\\r\\nUser-Agent: Isobar/healthcheck\\r\\n\\r\\n' >&3 && head -n 1 <&3 | grep -q ' 200'"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
+  # NWS's National Blend of Models: days 1 to 11 over the lower 48.
+  om-sync-nbm:
+    <<: *open-meteo
+    command: ["sync", "ncep_nbm_conus", "${OM_VARIABLES:-static,temperature_2m,relative_humidity_2m,precipitation,showers,snowfall,snowfall_water_equivalent,frozen_precipitation_percent,cloud_cover,pressure_msl,wind_u_component_10m,wind_v_component_10m,wind_speed_10m,wind_direction_10m,wind_gusts_10m,visibility,uv_index,uv_index_clear_sky,cape,lifted_index,convective_inhibition,categorical_freezing_rain,boundary_layer_height,shortwave_radiation,diffuse_radiation,precipitation_probability}", "--past-days", "2", "--repeat-interval", "5", "--concurrent", "2"]
+
+  # HRRR: current conditions and the next 48 hours. SHORT_RANGE_MODEL swaps it.
+  om-sync-hrrr:
+    <<: *open-meteo
+    command: ["sync", "${SHORT_RANGE_MODEL:-ncep_hrrr_conus}", "${OM_VARIABLES:-static,temperature_2m,relative_humidity_2m,precipitation,showers,snowfall,snowfall_water_equivalent,frozen_precipitation_percent,cloud_cover,pressure_msl,wind_u_component_10m,wind_v_component_10m,wind_speed_10m,wind_direction_10m,wind_gusts_10m,visibility,uv_index,uv_index_clear_sky,cape,lifted_index,convective_inhibition,categorical_freezing_rain,boundary_layer_height,shortwave_radiation,diffuse_radiation,precipitation_probability}", "--past-days", "2", "--repeat-interval", "5", "--concurrent", "2"]
+
+  # GFS: days 12 to 16 everywhere, and the only model covering Alaska, Hawaii
+  # and Puerto Rico. The 0.11 degree grid carries most fields; the 0.25
+  # degree grid adds pressure, gusts, visibility and storm ingredients.
+  om-sync-gfs:
+    <<: *open-meteo
+    command: ["sync", "ncep_gfs013,ncep_gfs025", "${OM_VARIABLES:-static,temperature_2m,relative_humidity_2m,precipitation,showers,snowfall,snowfall_water_equivalent,frozen_precipitation_percent,cloud_cover,pressure_msl,wind_u_component_10m,wind_v_component_10m,wind_speed_10m,wind_direction_10m,wind_gusts_10m,visibility,uv_index,uv_index_clear_sky,cape,lifted_index,convective_inhibition,categorical_freezing_rain,boundary_layer_height,shortwave_radiation,diffuse_radiation,precipitation_probability}", "--past-days", "2", "--repeat-interval", "5", "--concurrent", "2"]
+
+  # GFS ensemble rain chances: precipitation probability wherever NBM doesn't reach.
+  om-sync-gefs:
+    <<: *open-meteo
+    command: ["sync", "ncep_gefs025,ncep_gefs05", "precipitation_probability", "--past-days", "2", "--repeat-interval", "15", "--concurrent", "2"]
+
+  # CAMS global air quality, for /v1/air-quality.
+  om-sync-cams:
+    <<: *open-meteo
+    command: ["sync", "cams_global", "${OM_AIR_VARIABLES:-static,pm10,pm2_5,carbon_monoxide,nitrogen_dioxide,sulphur_dioxide,ozone}", "--past-days", "2", "--repeat-interval", "15", "--concurrent", "2"]
+
+  # Terrain the API uses to correct for elevation. Runs once and exits.
+  om-elevation:
+    <<: *open-meteo
+    restart: on-failure
+    command: ["sync", "copernicus_dem90", "static"]
+
+  geocoding:
+    image: ghcr.io/nullangst/isobar-geocoding
+    restart: unless-stopped
+    volumes:
+      - geo-data:/var/lib/geocoding-api/data
+    networks: [isobar]
+    logging: *logging
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "-A", "Isobar/healthcheck", "http://127.0.0.1:8080/v1/search?name=Denver&count=1"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      # The first start downloads the place database before it serves.
+      start_period: 30m
+
+  isobar-relay:
+    image: ghcr.io/nullangst/isobar-relay
+    restart: unless-stopped
+    ports:
+      - "${RELAY_PORT:-8787}:8787"
+    environment:
+      CONTACT_EMAIL: ${CONTACT_EMAIL:?Set CONTACT_EMAIL in .env (or the stack's environment variables)}
+      SERVER_LABEL: ${SERVER_LABEL:-Isobar Server}
+      KEYS_FILE: ${KEYS_FILE:-/config/keys.txt}
+      REQUIRE_HTTPS: ${REQUIRE_HTTPS:-true}
+      ENABLE_RADAR: ${ENABLE_RADAR:-true}
+      NWWS_USER: ${NWWS_USER:-}
+      NWWS_PASS: ${NWWS_PASS:-}
+      RATE_LIMIT_PER_KEY: ${RATE_LIMIT_PER_KEY:-300}
+      AUTH_FAIL_LIMIT: ${AUTH_FAIL_LIMIT:-20}
+      SILENT_HOLD_SECONDS: ${SILENT_HOLD_SECONDS:-30}
+      SILENT_HOLD_MAX: ${SILENT_HOLD_MAX:-200}
+      SHORT_RANGE_MODEL: ${SHORT_RANGE_MODEL:-ncep_hrrr_conus}
+    volumes:
+      # Read-only. In Portainer, set KEYS_PATH to the file's absolute path, like /opt/isobar/keys.txt.
+      - ${KEYS_PATH:-./keys.txt}:/config/keys.txt:ro
+      - relay-data:/data
+      - radar-tiles:/tiles:ro
+    networks: [isobar]
+    logging: *logging
+    # Root inside the container only so it can read a chmod 600 keys.txt owned
+    # by you on the host. It keeps one capability (reading files it doesn't
+    # own), can't gain more, and can't write outside /data and /tmp.
+    cap_drop: [ALL]
+    cap_add: [DAC_READ_SEARCH]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: [/tmp]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; r = u.Request('http://127.0.0.1:8787/v1/ping', headers={'User-Agent': 'Isobar/healthcheck', 'X-Forwarded-Proto': 'https'}); u.urlopen(r, timeout=5)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  mrms-radar:
+    image: ghcr.io/nullangst/isobar-radar
+    restart: unless-stopped
+    environment:
+      ENABLE_RADAR: ${ENABLE_RADAR:-true}
+      RADAR_ZOOMS: ${RADAR_ZOOMS:-3-8}
+    volumes:
+      - radar-tiles:/tiles
+    networks: [isobar]
+    logging: *logging
+
+networks:
+  isobar: {}
+
+volumes:
+  om-data: {}
+  geo-data: {}
+  relay-data: {}
+  radar-tiles: {}

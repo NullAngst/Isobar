@@ -2,7 +2,7 @@
 
 import { state, api, on, emit, saveSettings, openExternal, toast, el, debounce } from './core.js';
 import { uiIcon } from './icons.js';
-import { ago, ageText, countdown, instant, temp, haversineKm } from './util.js';
+import { ago, ageText, countdown, instant, temp, haversineKm, sourceLine } from './util.js';
 import { renderNow, currentHourIndex } from './now.js';
 import { renderForecast } from './hourly.js';
 import { initRadar, showRadar, hideRadar, focusGeometry } from './radar.js';
@@ -209,6 +209,7 @@ async function refreshAlerts() {
     if (res.ok) data.alerts = res.alerts || [];
     data.alerts_ok = res.ok;
     data.ages = { ...(data.ages || {}), alerts: res.age };
+    if (data.sources) data.sources.alerts = res.source || data.sources.alerts;
     data.mcds = res.mcds || [];
     updateAlertUi();
     if (before !== key(data)) widgetsChanged();
@@ -330,6 +331,18 @@ function renderTop() {
   const updated = $('updated');
   const age = state.data && state.data.ages && state.data.ages.forecast;
   const seconds = age ? Date.now() / 1000 - age : null;
+  const src = state.data && state.data.servers && state.data.sources && state.data.sources.forecast;
+  if (src) {
+    // With Isobar Servers set, the line says where the forecast came from, and
+    // turns red when that copy is past its source's stale threshold.
+    updated.classList.toggle('stale', !!src.stale);
+    updated.textContent = sourceLine(src);
+    updated.title = src.stale
+      ? 'No source had a fresh forecast, so this is the newest copy Isobar could get.'
+      : 'Where this forecast came from. Servers are set under Settings, Servers.';
+    reportStatus();
+    return;
+  }
   updated.classList.toggle('stale', seconds !== null && seconds > FORECAST_STALE_S);
   if (seconds !== null && seconds > FORECAST_STALE_S) {
     updated.textContent = `Forecast from ${ageText(seconds)} ago`;
@@ -694,6 +707,181 @@ function alertsSection() {
   return out;
 }
 
+// ------------------------------------------------------------------ settings: Isobar Servers
+
+const SERVER_STATES = {
+  ok: ['OK', ''],
+  stale: ['Stale', 'warn'],
+  unreachable: ['Unreachable', 'warn'],
+  cooldown: ['Cooldown', 'warn'],
+  key: ['Key not answering', 'warn'],
+  waiting: ['Rate limited, waiting', 'warn'],
+  off: ['Off', 'muted'],
+  unknown: ['Not used yet', 'muted'],
+};
+
+function datasetAges(datasets) {
+  const names = { alerts: 'alerts', forecast: 'forecast', observations: 'observations', air_quality: 'air quality', radar: 'radar' };
+  const parts = [];
+  for (const [key, name] of Object.entries(names)) {
+    const d = datasets && datasets[key];
+    if (!d) continue;
+    if (key === 'forecast' && d.warming_up) { parts.push('forecast still downloading'); continue; }
+    if (!d.fetched_at) continue;
+    parts.push(`${name} ${ago(d.fetched_at)}${d.stale ? ' (stale)' : ''}`);
+  }
+  return parts.join(', ');
+}
+
+function serversSection() {
+  const box = el('div', { class: 'server-list' });
+  let states = [];
+  let dragFrom = null;
+  // Test results by address, so a repaint (after a save or a state refresh) keeps them on screen.
+  const results = new Map();
+
+  const list = () => state.settings.servers.map((x) => ({ ...x }));
+  const save = (servers) => { saveSettings({ servers }); paint(); };
+
+  const refreshStates = async () => {
+    try {
+      states = (await api('/api/servers/state')).servers || [];
+    } catch { states = []; }
+    paint();
+  };
+
+  function card(srv, i, all) {
+    const st = states.find((x) => x.address === srv.address);
+    const [stateText, stateClass] = SERVER_STATES[(st && st.state) || (srv.enabled ? 'unknown' : 'off')] || SERVER_STATES.unknown;
+    const update = (patch) => { const next = list(); next[i] = { ...next[i], ...patch }; save(next); };
+    const move = (delta) => {
+      const next = list();
+      const j = i + delta;
+      if (j < 0 || j >= next.length) return;
+      [next[i], next[j]] = [next[j], next[i]];
+      save(next);
+    };
+    const label = el('input', { type: 'text', class: 'text-input', value: srv.label, maxlength: '40', 'aria-label': 'Server label', placeholder: 'Label, like VPS or Home' });
+    label.addEventListener('change', () => update({ label: label.value.trim() }));
+    const address = el('input', { type: 'url', class: 'text-input', value: srv.address, spellcheck: 'false', autocomplete: 'off', 'aria-label': 'Server address', placeholder: 'https://weather.example.net' });
+    address.addEventListener('change', () => {
+      const value = address.value.trim();
+      if (!/^https?:\/\/[^\s/]+\/?$/.test(value)) { toast('The address is the server\'s web address, like https://weather.example.net'); return; }
+      // Scheme, host and port only, lower case: the same form the settings file keeps.
+      update({ address: value.replace(/\/$/, '').toLowerCase() });
+    });
+    const key = el('input', { type: 'password', class: 'text-input', value: srv.key, spellcheck: 'false', autocomplete: 'off', 'aria-label': 'Server key', placeholder: 'Key from whoever runs the server' });
+    key.addEventListener('change', () => update({ key: key.value.trim() }));
+    const show = el('button', {
+      class: 'link small', type: 'button',
+      onclick: () => { key.type = key.type === 'password' ? 'text' : 'password'; show.textContent = key.type === 'password' ? 'Show' : 'Hide'; },
+    }, 'Show');
+    const kept = results.get(srv.address);
+    const result = el('p', { class: `muted small server-result${kept && !kept.ok ? ' warn-text' : ''}`, role: 'status' }, kept ? kept.text : '');
+    const test = el('button', {
+      class: 'btn', type: 'button',
+      onclick: async () => {
+        test.disabled = true;
+        result.textContent = 'Testing...';
+        try {
+          const res = await api('/api/servers/test', {}, { method: 'POST', body: JSON.stringify({ address: address.value.trim(), key: key.value.trim() }) });
+          let text = res.message;
+          if (res.ok) {
+            const caps = Object.entries(res.capabilities || {}).filter(([, on]) => on).map(([k]) => ({ radar: 'radar', nwws: 'NWWS-OI alerts', air_quality: 'air quality' }[k] || k));
+            const ages = datasetAges(res.datasets);
+            text = `${res.message}${caps.length ? ` Runs ${caps.join(', ')}.` : ''}${ages ? ` Data: ${ages}.` : ''}`;
+          }
+          results.set(srv.address, { text, ok: !!res.ok });
+          result.textContent = text;
+          result.classList.toggle('warn-text', !res.ok);
+        } catch (err) {
+          results.set(srv.address, { text: `Test failed: ${err.message}`, ok: false });
+          result.textContent = `Test failed: ${err.message}`;
+        } finally {
+          test.disabled = false;
+          refreshStates();
+        }
+      },
+    }, 'Test');
+    const enabled = el('label', { class: 'switch' },
+      el('input', { type: 'checkbox', checked: !!srv.enabled, onchange: (e) => update({ enabled: e.target.checked }) }),
+      el('span', {}, 'Use'));
+    const node = el('div', { class: 'server-card', dataset: { index: String(i) } },
+      el('div', { class: 'server-head' },
+        el('span', {
+          class: `server-state ${stateClass}`,
+          title: stateText === 'Cooldown' ? `Three failures in a row; tried again within 5 minutes.${st && st.error ? ` Last: ${st.error}` : ''}` : (st && st.error) || '',
+        }, stateText),
+        enabled,
+        el('span', { class: 'row' },
+          el('button', { class: 'icon-btn small', type: 'button', 'aria-label': 'Move up', title: 'Move up', disabled: i === 0, html: uiIcon('up', 14), onclick: () => move(-1) }),
+          el('button', { class: 'icon-btn small', type: 'button', 'aria-label': 'Move down', title: 'Move down', disabled: i === all.length - 1, html: uiIcon('down', 14), onclick: () => move(1) }),
+          el('button', { class: 'icon-btn small', type: 'button', 'aria-label': `Remove ${srv.label}`, title: 'Remove', html: uiIcon('close', 14), onclick: () => save(list().filter((_, k) => k !== i)) }))),
+      label, address,
+      el('div', { class: 'row gap' }, key, show),
+      el('div', { class: 'row gap' }, test),
+      result);
+    if (platform === 'desktop') {
+      // Drag a card onto another to reorder. Phones use the arrows.
+      node.draggable = true;
+      node.addEventListener('dragstart', (e) => {
+        if (e.target.closest('input')) { e.preventDefault(); return; }
+        dragFrom = i;
+        e.dataTransfer.effectAllowed = 'move';
+      });
+      node.addEventListener('dragover', (e) => { e.preventDefault(); node.classList.add('drop'); });
+      node.addEventListener('dragleave', () => node.classList.remove('drop'));
+      node.addEventListener('drop', (e) => {
+        e.preventDefault();
+        node.classList.remove('drop');
+        if (dragFrom === null || dragFrom === i) return;
+        const next = list();
+        const [moved] = next.splice(dragFrom, 1);
+        next.splice(i, 0, moved);
+        dragFrom = null;
+        save(next);
+      });
+    }
+    return node;
+  }
+
+  function paint() {
+    const servers = state.settings.servers || [];
+    box.replaceChildren(...servers.map((srv, i, all) => card(srv, i, all)));
+    if (!servers.length) box.append(el('p', { class: 'muted small' }, 'No servers. Isobar talks to the weather services directly.'));
+  }
+
+  const add = el('button', {
+    class: 'btn', type: 'button',
+    onclick: () => {
+      const servers = list();
+      if (servers.length >= 10) { toast('Ten servers is the most Isobar keeps.'); return; }
+      // Saved once it has an address; until then it lives only on screen.
+      const draft = { label: '', address: '', key: '', enabled: true };
+      state.settings.servers = [...servers, draft];
+      paint();
+      const inputs = box.querySelectorAll('.server-card:last-child input[type="url"]');
+      if (inputs.length) inputs[0].focus();
+    },
+  }, 'Add a server');
+
+  paint();
+  refreshStates();
+  return [
+    el('h3', {}, 'Servers'),
+    el('p', { class: 'muted small' },
+      'Optional. An Isobar Server is a weather relay that you or a friend runs. When a weather service goes down, ',
+      'Isobar shows slightly old data from a server instead of "Can\'t connect". Servers are tried top to bottom, ',
+      'and with none, Isobar talks to the weather services directly, as it always has.'),
+    box,
+    el('div', { class: 'row gap' }, add,
+      el('button', { class: 'link small', type: 'button', onclick: () => openExternal('https://github.com/NullAngst/Isobar/blob/main/Server/README.md') },
+        'Host your own ', el('span', { html: uiIcon('external', 14) }))),
+    checkbox('servers_direct', 'Go direct to the weather services when every server fails'),
+    el('p', { class: 'muted small' }, 'Off means Isobar only uses servers. Radar, outlooks, satellite and maps always come straight from their sources.'),
+  ];
+}
+
 function widgetSection() {
   const s = state.settings;
   const same = (a, b) => a && b && Math.abs(a.lat - b.lat) < 1e-3 && Math.abs(a.lon - b.lon) < 1e-3;
@@ -765,6 +953,7 @@ function renderSettings() {
     select('Loop length', 'radar_loop_minutes', [[30, '30 minutes'], [60, '1 hour'], [90, '90 minutes'], [120, '2 hours'], [180, '3 hours']], true),
     select('Loop speed', 'radar_speed_ms', [[700, 'Slow'], [450, 'Normal'], [250, 'Fast']], true),
     ...alertsSection(),
+    ...serversSection(),
     ...(platform === 'android' ? widgetSection() : []),
     el('h3', {}, 'Saved places'),
     savedBox,
@@ -775,7 +964,7 @@ function renderSettings() {
       'Forecast and air quality from Open-Meteo. Alerts, observations, forecast text and discussions from the National Weather Service. ',
       'Radar, storm attributes and HRRR imagery from the Iowa Environmental Mesonet. Satellite loops from NOAA NESDIS. ',
       'Outlooks from the Storm Prediction Center, tropical cones from the National Hurricane Center. ',
-      'Maps from CARTO, OpenStreetMap and Esri.'),
+      'Maps from CARTO, OpenStreetMap and Esri. Server fallback radar derived from NOAA MRMS.'),
     el('div', { class: 'row gap' },
       el('button', { class: 'link', onclick: () => { closeSettings(); openKeys(); } }, 'Keyboard shortcuts'),
       link('Source code', 'https://github.com/NullAngst/Isobar'),

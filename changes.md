@@ -1,5 +1,20 @@
 # Changes
 
+2026.11.20 - Isobar Server support / Radar fix
+
+* Settings, Servers: add one or more Isobar Servers (label, address, key, on or off), reorder them by dragging on the desktop or with the arrows on Android, and Test each one. Test tells apart "the server is down" from "the server is up but isn't answering this key", since a server never says "wrong key".
+* Forecasts, place search, air quality, alerts, observations and the map's warning shapes walk the server list in order before going direct: 5 seconds per server, a fresh answer wins, a stale one is held while the next server is tried, three failures in a row put a server in a 5 minute cooldown, a 429 is waited out, and a key that isn't answering is skipped until it's edited. With no servers set, Isobar makes exactly the same requests as 1.6.0.
+* "Go direct when every server fails", on by default. Off makes Isobar use servers only. If nothing fresh comes back, the freshest copy seen stays on screen with its age.
+* Every panel that came from a server says so: "Updated 3 min ago, via VPS" or "direct", in red once it's past the source's stale threshold. Alerts get a banner when a server's alert feed is stale ("Alert feed unavailable since 9:10 PM. New warnings may be missing.") or coming from its IEM backup.
+* Radar falls back to MRMS reflectivity from the first server that runs radar when IEM's radar fails (a frame with no tile after 6 seconds, two failed frames in a row, or a newest scan over 15 minutes old), shows "Radar: MRMS via <server>" while switched, and tries IEM again every 5 minutes. The MRMS tiles use IEM's own colors, so the palette and cutoff settings still work.
+* Notifications recognize the same alert by its VTEC event when its id changes, so switching between the NWS feed, a server's backup feed or NWWS-OI doesn't ping twice.
+* Fixed: every radar product drew nothing. IEM moved its tiles off mesonet1 to mesonet3 onto mesonet.agron.iastate.edu, and the old hosts answer with a redirect that carries no CORS header, which broke both the direct load and the proxy retry. Tiles now load from the one host.
+* Every radar product (not only reflectivity) now retries a failed tile through Isobar's proxy, and the proxy follows redirects that stay on agron.iastate.edu, so the next host move slows radar down instead of breaking it.
+* A radar frame where most tiles failed is marked failed instead of loaded: the timeline says so, "Radar tiles failed to load" shows next to it, and the console names the URL and why.
+* The Isobar Server itself lives under Server/, with its own README, maintenance.md and changes.md, and its images build with their own workflow.
+
+Reasons for changes: upstream weather endpoints keep going down, and the app could only say "Can't connect". Servers turn an outage into slightly old data. The radar fix ships with this release because the MRMS fallback switches on failed frames, and Leaflet's load event couldn't tell a failed frame from a loaded one. Note that a server's forecast stitches NOAA's own models, so its numbers can differ a little from the direct Open-Meteo numbers; the source line says which you're looking at.
+
 2026.11.15 - Android widgets / Network reliability
 
 * Home screen widgets for the Android app: a small one (temperature, conditions, place, the most serious warning or watch) and a wide one that adds high and low, feels like, rain chance, last update time and the next five hours. Tapping opens the app; tapping the alert line opens Alerts.

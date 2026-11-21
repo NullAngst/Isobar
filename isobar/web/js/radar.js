@@ -6,7 +6,7 @@
 // Reflectivity tiles are decoded back to dBZ in the browser and repainted
 // with the selected palette and clutter cutoff.
 
-import { state, api, IEM, proxyUrl, on, saveSettings, toast, el, debounce, esc, openExternal } from './core.js';
+import { state, api, IEM, proxyUrl, tokenUrl, on, saveSettings, toast, el, debounce, esc, openExternal } from './core.js';
 import { createMap, applyBasemap, setBorders, locationMarker, BASEMAPS } from './basemap.js';
 import { PALETTES, paletteLUT, colorIndex, dbzToIndex, DBZ_MIN, DBZ_STEP } from './ramps.js';
 import {
@@ -15,7 +15,10 @@ import {
 } from './util.js';
 import { uiIcon } from './icons.js';
 
-const TILE = (layer, cache = 'c') => `https://mesonet{s}.agron.iastate.edu/${cache}/tile.py/1.0.0/${layer}/{z}/{x}/{y}.png`;
+// IEM serves every radar product from one host. It used to spread tiles over
+// mesonet1 to mesonet3; those now answer with a redirect that carries no CORS
+// header, which a page can't follow, so nothing points at them any more.
+const TILE = (layer, cache = 'c') => `${IEM}/${cache}/tile.py/1.0.0/${layer}/{z}/{x}/{y}.png`;
 
 const PRODUCTS = [
   { id: 'refl', name: 'Reflectivity', hint: 'Precipitation intensity', mosaic: true, siteProduct: 'N0B', recolor: true },
@@ -127,14 +130,73 @@ function paintTile(canvas, img) {
   ctx.putImageData(data, 0, 0);
 }
 
+// ------------------------------------------------------------------ tile loading with a proxy fallback
+
+// Every radar tile loads straight from its host first. If that fails (a host
+// move, a missing CORS header, a dropped connection), it's fetched once more
+// through Isobar's own proxy, which follows redirects that stay on IEM's
+// domain. A tile that fails both ways counts against its frame, and the error
+// says which URL failed and why.
+async function fetchProxied(url) {
+  const resp = await fetch(proxyUrl(url));
+  if (!resp.ok) {
+    let why = `HTTP ${resp.status}`;
+    try {
+      const body = await resp.json();
+      if (body && body.error) why = body.error;
+    } catch { /* not JSON: keep the status */ }
+    throw new Error(why);
+  }
+  return URL.createObjectURL(await resp.blob());
+}
+
+function loadTileImage(img, url, viaProxy, finish) {
+  let proxied = !viaProxy;
+  let blobUrl = null;
+  img.onload = () => {
+    finish(null);
+    // The decoded picture stays on the image after the blob URL goes.
+    if (blobUrl) URL.revokeObjectURL(blobUrl);
+  };
+  img.onerror = () => {
+    if (proxied) {
+      finish(new Error(blobUrl ? 'proxied tile would not decode' : 'tile did not load'));
+      return;
+    }
+    proxied = true;
+    fetchProxied(url).then((src) => { blobUrl = src; img.src = src; }, (err) => finish(err));
+  };
+  img.src = url;
+}
+
+// Tile counts per frame. A frame where most tiles failed is marked failed, not
+// ready, since Leaflet's own load event fires either way.
+function resetStats(layer) {
+  layer._stats = { total: 0, ok: 0, failed: 0, last: null };
+}
+
+function stats(layer) {
+  if (!layer._stats) resetStats(layer);
+  return layer._stats;
+}
+
+function tileDone(layer, url, err) {
+  const s = stats(layer);
+  if (err) {
+    s.failed++;
+    s.last = { url, why: err.message || String(err) };
+  } else {
+    s.ok++;
+  }
+}
+
 const RecolorLayer = L.GridLayer.extend({
   initialize(url, options) {
     this._url = url;
     L.GridLayer.prototype.initialize.call(this, options);
   },
   tileUrl(coords) {
-    const subs = this.options.subdomains;
-    return L.Util.template(this._url, { s: subs[Math.abs(coords.x + coords.y) % subs.length], x: coords.x, y: coords.y, z: coords.z });
+    return L.Util.template(this._url, { x: coords.x, y: coords.y, z: coords.z });
   },
   createTile(coords, done) {
     const size = this.getTileSize();
@@ -144,23 +206,36 @@ const RecolorLayer = L.GridLayer.extend({
     const img = new Image();
     img.crossOrigin = 'anonymous';
     const url = this.tileUrl(coords);
-    let proxied = false;
-    img.onload = () => {
+    stats(this).total++;
+    loadTileImage(img, url, this.options.viaProxy !== false, (err) => {
+      tileDone(this, url, err);
+      if (err) {
+        done(err, canvas);
+        return;
+      }
       paintTile(canvas, img);
       // Kept for the pointer readout, which reads the original colors back.
       canvas._src = img;
       done(null, canvas);
-    };
-    img.onerror = () => {
-      if (!proxied) {
-        proxied = true;
-        img.src = proxyUrl(url);
-      } else {
-        done(null, canvas);
-      }
-    };
-    img.src = url;
+    });
     return canvas;
+  },
+});
+
+// Every other tiled product: a plain tile layer with the same fallback and counting.
+const FallbackTileLayer = L.TileLayer.extend({
+  createTile(coords, done) {
+    const img = document.createElement('img');
+    img.alt = '';
+    img.setAttribute('role', 'presentation');
+    img.crossOrigin = 'anonymous';
+    const url = this.getTileUrl(coords);
+    stats(this).total++;
+    loadTileImage(img, url, this.options.viaProxy !== false, (err) => {
+      tileDone(this, url, err);
+      done(err, img);
+    });
+    return img;
   },
 });
 
@@ -442,6 +517,13 @@ async function buildFrames() {
     return out;
   }
 
+  if (p.id === 'refl' && mrms) {
+    if (Date.now() < mrms.until) return mrmsFrames();
+    // Five minutes on MRMS: try IEM again. Two failed frames switch back.
+    mrms = null;
+    iemFailures = 0;
+  }
+
   if (p.id === 'refl' && site === 'mosaic') {
     const step = 5 * 60000;
     const last = Math.floor((Date.now() - 7 * 60000) / step) * step;
@@ -570,17 +652,51 @@ function makeLayer(frame) {
     layer.on('load error', () => { layer._ready = true; loading.delete(layer); updateLoading(); pump(); });
   } else {
     const options = {
-      pane: 'radar', opacity: 0, subdomains: '123', maxZoom: 19, maxNativeZoom: 12,
+      pane: 'radar', opacity: 0, maxZoom: 19, maxNativeZoom: 12,
       updateWhenZooming: false, keepBuffer: 1, className: 'radar-tiles', crossOrigin: 'anonymous',
     };
-    layer = frame.recolor ? new RecolorLayer(frame.url, options) : L.tileLayer(frame.url, options);
-    layer.on('loading', () => { layer._ready = false; loading.add(layer); updateLoading(); });
-    layer.on('load', () => { layer._ready = true; loading.delete(layer); updateLoading(); pump(); });
+    if (frame.mrms) {
+      // Server MRMS tiles come from Isobar's own backend, zoom 3 to 8 only.
+      Object.assign(options, { minNativeZoom: 3, maxNativeZoom: 8, viaProxy: false });
+    }
+    layer = frame.recolor ? new RecolorLayer(frame.url, options) : new FallbackTileLayer(frame.url, options);
+    layer._iemRefl = !frame.mrms && frame.recolor;
+    layer.on('loading', () => {
+      layer._ready = false;
+      layer._failed = false;
+      resetStats(layer);
+      loading.add(layer);
+      updateLoading();
+      watchTimeout(layer);
+    });
+    layer.on('load', () => {
+      layer._ready = true;
+      clearTimeout(layer._timer);
+      loading.delete(layer);
+      judgeFrame(layer);
+      updateLoading();
+      pump();
+    });
   }
   layer._key = frameKey(frame);
   layer._onMap = false;
   layer._ready = false;
   return layer;
+}
+
+// Leaflet's load event fires once every tile is done, failed tiles included,
+// so it can't say whether a frame actually drew. This can: a frame where most
+// tiles failed is marked failed, shows as failed on the timeline, and is what
+// the MRMS fallback switches on.
+function judgeFrame(layer) {
+  const s = stats(layer);
+  layer._failed = s.total > 0 && s.failed * 2 > s.total;
+  if (layer._failed) {
+    const last = s.last ? ` Last failure: ${s.last.url} (${s.last.why})` : '';
+    console.warn(`Radar tiles failed to load: ${s.failed} of ${s.total} tiles.${last}`);
+  }
+  if (layer === layers[index]) show(index);
+  if (layer._iemRefl) noteIemFrame(layer._failed);
 }
 
 function putOnMap(layer) {
@@ -646,6 +762,7 @@ async function rebuild({ keepIndex = false, force = false } = {}) {
   if (p.field) {
     clearFrames();
     renderTimeline();
+    renderSource();
     ensureField();
     return;
   }
@@ -653,6 +770,7 @@ async function rebuild({ keepIndex = false, force = false } = {}) {
 
   const next = await buildFrames();
   if (token !== buildToken) return;
+  renderSource();
   const prevTime = keepIndex && frames[index] ? frames[index].time : null;
   if (next.length && next[0].image && (force || satNeedsNewView())) {
     satBounds = map.getBounds().pad(0.3);
@@ -722,11 +840,18 @@ function show(i) {
     } else if (!text) {
       text = 'Latest scan';
     }
+    const failed = !!(layers[i] && layers[i]._failed);
+    if (failed) text += ', tiles failed';
     ui.label.textContent = text;
-    ui.label.classList.toggle('stale', stale);
-    ui.label.title = stale ? 'The newest frame is more than 15 minutes old. The radar feed may be behind.' : '';
+    ui.label.classList.toggle('stale', stale || failed);
+    ui.label.title = failed
+      ? 'Most of this frame\'s radar tiles failed to load. The browser console names the URL and why.'
+      : stale ? 'The newest frame is more than 15 minutes old. The radar feed may be behind.' : '';
+    // IEM's newest scan going stale is one of the reasons to try a server's MRMS radar.
+    if (stale && f.recolor && !f.mrms) switchToMrms('newest IEM scan is more than 15 minutes old');
   }
   if (ui.slider) ui.slider.value = String(i);
+  updateLoading();
 }
 
 function play() {
@@ -786,13 +911,96 @@ function step(delta) {
 function updateLoading() {
   if (!ui.spinner) return;
   const busy = loading.size > 0 || pending.length > 0;
+  const failed = !!(layers[index] && layers[index]._failed);
   ui.spinner.hidden = !busy;
+  if (ui.failNote) ui.failNote.hidden = !failed || busy;
   if (busy && layers.length > 1) {
     const ready = layers.filter((l) => l._ready).length;
-    ui.spinner.title = `Loading frames: ${ready} of ${layers.length} ready`;
+    const bad = layers.filter((l) => l._failed).length;
+    ui.spinner.title = `Loading frames: ${ready} of ${layers.length} ready${bad ? `, ${bad} failed` : ''}`;
   } else {
     ui.spinner.title = 'Loading';
   }
+}
+
+// ------------------------------------------------------------------ MRMS fallback from an Isobar Server
+//
+// IEM stays the radar source. When its reflectivity fails (a frame that
+// takes more than 6 seconds without a single tile, two failed frames in a
+// row, or a newest scan more than 15 minutes old), the radar switches to MRMS
+// reflectivity tiles from the first server in Settings, Servers that runs
+// radar, and tries IEM again every 5 minutes. Velocity, rotation, echo tops
+// and the rest have no fallback.
+
+const IEM_TIMEOUT_MS = 6000;
+const IEM_RETRY_MS = 5 * 60000;
+let iemFailures = 0;
+let mrms = null;            // { label, index, frames, until } while switched
+let mrmsAsking = false;
+let mrmsNoneUntil = 0;      // no server has radar: don't ask again before this
+
+function watchTimeout(layer) {
+  clearTimeout(layer._timer);
+  if (!layer._iemRefl) return;
+  layer._timer = setTimeout(() => {
+    if (layer._onMap && !layer._ready && stats(layer).ok === 0) {
+      console.warn('IEM radar tiles timed out after 6 seconds');
+      switchToMrms('IEM radar timed out');
+    }
+  }, IEM_TIMEOUT_MS);
+}
+
+function noteIemFrame(failed) {
+  iemFailures = failed ? iemFailures + 1 : 0;
+  if (iemFailures >= 2) switchToMrms('two IEM radar frames failed in a row');
+}
+
+async function switchToMrms(reason) {
+  if (mrms || mrmsAsking || Date.now() < mrmsNoneUntil || product().id !== 'refl') return;
+  mrmsAsking = true;
+  try {
+    const res = await api('/api/radar/mrms');
+    if (!res || !res.frames || !res.frames.length) {
+      mrmsNoneUntil = Date.now() + 2 * 60000;
+      return;
+    }
+    mrms = { label: res.label, index: res.index, frames: res.frames, until: Date.now() + IEM_RETRY_MS };
+    console.warn(`Radar switched to MRMS via ${res.label}: ${reason}`);
+    toast(`Radar: MRMS via ${res.label}. IEM radar is not loading.`);
+    iemFailures = 0;
+    rebuild({ keepIndex: false });
+  } catch (err) {
+    console.warn('no MRMS fallback available', err);
+    mrmsNoneUntil = Date.now() + 2 * 60000;
+  } finally {
+    mrmsAsking = false;
+  }
+}
+
+async function mrmsFrames() {
+  // Refresh the server's frame list, so the loop keeps moving while switched.
+  try {
+    const res = await api('/api/radar/mrms', { s: mrms.index });
+    if (res && res.frames && res.frames.length) {
+      mrms.frames = res.frames;
+      mrms.label = res.label;
+    }
+  } catch (err) {
+    console.warn('MRMS frame list', err);
+  }
+  return mrms.frames.map((f) => ({
+    url: tokenUrl(`/proxy/mrms/${encodeURIComponent(f.id)}/{z}/{x}/{y}.png`, { s: mrms.index }),
+    time: f.time,
+    recolor: true,
+    mrms: true,
+  }));
+}
+
+function renderSource() {
+  if (!ui.source) return;
+  const on = !!(mrms && product().id === 'refl');
+  ui.source.hidden = !on;
+  if (on) ui.source.textContent = `Radar: MRMS via ${mrms.label}. Derived from NOAA MRMS.`;
 }
 
 // ------------------------------------------------------------------ fields
@@ -1565,10 +1773,12 @@ export function initRadar(container) {
   ui.slider = el('input', { type: 'range', min: '0', max: '0', value: '0', 'aria-label': 'Frame', oninput: (e) => { stop(); show(Number(e.target.value)); followLatest = atLatest(); } });
   ui.label = el('span', { class: 'frame-label' });
   ui.spinner = el('span', { class: 'spinner', hidden: true, 'aria-label': 'Loading' });
-  const timeline = el('div', { class: 'float timeline' }, ui.prev, ui.play, ui.next, ui.slider, ui.label, ui.spinner);
+  ui.failNote = el('span', { class: 'frame-failed', hidden: true, role: 'status' }, 'Radar tiles failed to load');
+  const timeline = el('div', { class: 'float timeline' }, ui.prev, ui.play, ui.next, ui.slider, ui.label, ui.spinner, ui.failNote);
   ui.legend = el('div', { class: 'float legend' });
+  ui.source = el('div', { class: 'float radar-source', hidden: true, role: 'status' });
 
-  root.append(mapEl, panel, layersBtn, homeBtn, layersPanel, ui.chips, timeline, ui.legend, ui.readout);
+  root.append(mapEl, panel, layersBtn, homeBtn, layersPanel, ui.chips, timeline, ui.legend, ui.source, ui.readout);
 
   map = createMap(mapEl);
   const start = state.loc ? [state.loc.lat, state.loc.lon] : [38.5, -96];

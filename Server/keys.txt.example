@@ -1,0 +1,15 @@
+# One key per person. A # line names the key on the next line; the name only
+# shows up in the server's log. Make each key with: openssl rand -hex 32
+# Keys shorter than 16 characters are skipped, so the placeholders below do
+# nothing and a copy of this file left as it is won't start a server.
+# Edit this file while the server runs and the change takes effect within
+# 10 seconds.
+
+#friend1
+keypasshere
+
+#friend2
+keypasshere
+
+#friend3
+keypasshere

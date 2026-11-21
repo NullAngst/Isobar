@@ -109,7 +109,9 @@ export function renderNow(root) {
   const health = alertHealthNote(data);
 
   const obs = data.obs && data.obs.time && (Date.now() - new Date(data.obs.time)) < 3 * 3600e3
-    ? el('p', { class: 'obs' }, `Observed ${temp(data.obs.temp_c)} at ${data.obs.station}, ${ago(data.obs.time)}`)
+    ? el('p', { class: 'obs' }, `Observed ${temp(data.obs.temp_c)} at ${data.obs.station}, ${ago(data.obs.time)}`,
+      data.servers && data.sources && data.sources.obs && data.sources.obs.via !== 'direct'
+        ? `, via ${data.sources.obs.via}` : '')
     : null;
 
   const nwsLine = data.periods && data.periods.length

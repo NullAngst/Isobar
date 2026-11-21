@@ -35,9 +35,21 @@ Open Isobar on a US location with weather going on (or anywhere, if the sky is q
 | HRRR run time | mesonet.agron.iastate.edu/data/gis/images/4326/hrrr/refd_1080.json | `hrrr_run` |
 | Satellite loop | satellitemaps.nesdis.noaa.gov ABI*_Last_24hr ImageServer | `sat_info` |
 | Hurricane cones | mapservices.weather.noaa.gov NHC_tropical_weather_summary layers 6 and 7 | `tropical` |
-| Radar tiles | mesonet*.agron.iastate.edu tile.py | `radar.js` |
+| Radar tiles | mesonet.agron.iastate.edu tile.py | `radar.js` (`TILE`), `server.py` (`TILE_HOSTS`) |
 
 Things that have changed before, or are likely to:
+
+- **IEM radar tile hosts.** IEM moved its tiles off mesonet1 to mesonet3 onto mesonet.agron.iastate.edu in November 2026, and the old hosts answer with a redirect that carries no CORS header, which blanked every radar product at once. Check one tile per product answers directly with a 200 and an image:
+
+  ```
+  for layer in ridge::USCOMP-N0Q-0 ridge::FFC-N0B-0 ridge::FFC-N0U-0 ridge::FFC-N0S-0 ridge::FFC-NET-0 nexrad-eet q2-n1p hrrr::REFP-F0000-0 uscounties; do
+    printf '%s ' "$layer"
+    curl -sI "https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/$layer/5/8/12.png" | grep -iE '^(HTTP|content-type)' | tr -d '\r' | tr '\n' ' '
+    printf '\n'
+  done
+  ```
+
+  Every line should read `HTTP/2 200` (or `HTTP/1.1 200`) and `content-type: image/png`. A 301 or 302 means IEM moved the tiles again: update `TILE` in `radar.js` and `TILE_HOSTS` in `server.py`. Until then, Isobar's proxy follows redirects that stay on agron.iastate.edu, so radar keeps working, slower. A frame where most tiles fail shows "Radar tiles failed to load", and the browser console (or `--debug` log) names the URL and status.
 
 - **SPC intensity files** have been renamed once (sig* to cig*). `_spc_urls` tries both. If hatching disappears, check the file names on spc.noaa.gov/products/outlook.
 - **NOAA map service layer numbers** (the hurricane cone is layer 7, the track layer 6) can shift when NOAA republishes a service. Open the service URL with `?f=pjson` in a browser and check the layer list.
@@ -65,6 +77,14 @@ Things that have changed before, or are likely to:
 
 1. The AppImage should stay around 180 MB. If it jumps, `isobar.spec` probably started pulling in a Qt module it doesn't need. Add its prefix to `DROP_MODULES`.
 2. On your own machine, Settings, Maps shows the tile cache size. It caps itself at about 6,000 tiles.
+
+### 6. Isobar Servers, from the app's side
+
+With no servers in Settings, none of this code runs, so a release that only touched the app needs nothing here. With servers set:
+
+1. Settings, Servers, Test on each one should say Connected and list how old its data is.
+2. Stop one server (or put a wrong key on it) and confirm the next one in the list takes over within about 5 seconds, and Settings shows the stopped one as Cooldown or Key not answering.
+3. The server side has its own checklist in `Server/maintenance.md`.
 
 ## When something breaks between check-ups
 

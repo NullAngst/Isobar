@@ -134,11 +134,23 @@ class AlertWatcher:
                 continue
             event = alert.get("event") or "Weather alert"
             rank = _rank(alert)
+            # VTEC event keys stay the same across updates and across sources (the
+            # NWS feed, an Isobar Server's backup feed, NWWS-OI), so an alert that
+            # comes back under a new id is still recognized as the same event.
+            events = [f"vtec:{k}" for k in alert.get("events") or []]
             if aid in self.seen:
                 self.seen[aid][1] = now
+                for key in events:
+                    if key in self.seen:
+                        self.seen[key][1] = now
                 continue
             earlier = [self.seen[r] for r in alert.get("references") or [] if r in self.seen]
+            earlier += [self.seen[k] for k in events if k in self.seen]
             self.seen[aid] = [event, now, rank]
+            for key in events:
+                prev = self.seen.get(key)
+                best = max(rank, prev[2]) if prev and prev[0] == event else rank
+                self.seen[key] = [event, now, best]
             if alert.get("type") == "Cancel":
                 continue
             same = [e for e in earlier if e[0] == event]

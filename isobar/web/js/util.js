@@ -366,3 +366,13 @@ export function alertTagList(alert) {
   if (t.damage) out.push({ text: `${t.damage} damage threat`, strong: /catastrophic|destructive/i.test(t.damage) });
   return out;
 }
+
+// ------------------------------------------------------------------ where data came from
+
+// "Updated 3 min ago, via VPS" or "Updated 3 min ago, direct", from a source
+// record the backend sends ({ fetched, via, stale, ... }). Empty when unknown.
+export function sourceLine(info, what = 'Updated') {
+  if (!info || !info.fetched) return '';
+  const when = ago(new Date(info.fetched * 1000).toISOString());
+  return `${what} ${when}, ${info.via === 'direct' ? 'direct' : `via ${info.via}`}`;
+}
