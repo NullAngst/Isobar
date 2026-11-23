@@ -1,5 +1,13 @@
 # Server changes
 
+2026.11.23 - Geocoder first start
+
+* Geocoding image: the first start now logs each step (unpacking, the database size, the record check and how long it took, then serving) instead of going quiet after the checksum line.
+* Geocoding image: unpacking overwrites a half-finished database from an interrupted first start. Before, zstd refused to overwrite it and the container exited on every restart.
+* Hosting guide: a troubleshooting entry for the geocoder's long first start.
+
+Reasons for changes: the first start looked stuck after "database-v1.bin.zst: OK" while the full record check ran with no output.
+
 2026.11.23 - Geocoder crash fix
 
 * Geocoding image: tzdata is now installed. The geocoder looks up the GMT time zone when it starts and crashes without the zone files, which bare Ubuntu doesn't have. That was the exit 132 (x86) and 133 (ARM) in the build's smoke test. The earlier .deb-based image had the same bug; it just never got started during a build.
