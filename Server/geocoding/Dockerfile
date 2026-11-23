@@ -20,8 +20,11 @@ RUN bash /opt/geocoding/install.sh "$GEOCODER_RELEASE" /out
 
 FROM ubuntu:jammy
 
+# tzdata is required: the geocoder looks up the GMT time zone at startup and
+# crashes (illegal instruction on x86, trap on ARM) when the zone files are
+# missing, which they are in the bare Ubuntu image.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl zstd \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl tzdata zstd \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /out/bin/ /usr/local/bin/
@@ -32,6 +35,13 @@ COPY entrypoint.sh /opt/geocoding/
 RUN if ldd /usr/local/bin/geocoding-api | grep 'not found'; then \
       printf 'geocoding-api is missing libraries on plain Ubuntu\n' >&2; exit 1; \
     fi
+# Start it once. With no database yet it stops with exit code 1, which is
+# fine. A code of 125 or more means it crashed, so the build stops here.
+RUN SWIFT_BACKTRACE=enable=no geocoding-api --help >/tmp/start.log 2>&1; rc=$?; \
+    if [ "$rc" -ge 125 ]; then \
+      cat /tmp/start.log >&2; printf 'geocoding-api crashed on start (exit %s)\n' "$rc" >&2; exit 1; \
+    fi; \
+    rm -f /tmp/start.log
 
 VOLUME /var/lib/geocoding-api/data
 EXPOSE 8080

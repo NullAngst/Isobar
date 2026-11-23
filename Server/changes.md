@@ -1,5 +1,13 @@
 # Server changes
 
+2026.11.23 - Geocoder crash fix
+
+* Geocoding image: tzdata is now installed. The geocoder looks up the GMT time zone when it starts and crashes without the zone files, which bare Ubuntu doesn't have. That was the exit 132 (x86) and 133 (ARM) in the build's smoke test. The earlier .deb-based image had the same bug; it just never got started during a build.
+* Geocoding image: the build now starts the geocoder once and fails if it crashes. With no database yet it exits with 1, which counts as a pass.
+* Workflow: the separate geocoder smoke test is gone, since the Dockerfile check covers it and handles the no-database exit correctly.
+
+Reasons for changes: the v1.8.0 image build failed the geocoder smoke test on both CPUs. Reproduced with Open-Meteo's own x86 binary by hiding /usr/share/zoneinfo.
+
 2026.11.23 - ARM support
 
 * Every image the stack runs now comes in x86 and ARM (linux/amd64 and linux/arm64), under the same `latest` tag. Docker picks the right one on pull.
