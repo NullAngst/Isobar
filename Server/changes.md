@@ -1,5 +1,12 @@
 # Server changes
 
+2026.11.23 - Build fixes
+
+* Geocoding image: the geocoder's .deb is now unpacked into a scratch folder and only its two programs are copied out. Unpacking it over / replaced Ubuntu's /lib link with the package's own lib folder (it ships a systemd unit there), which removed every system library and broke the build.
+* Relay image: the build now installs a compiler and the eccodes library before installing the Python packages, and removes the compiler afterwards. The untagged base moved to Python 3.15, and pygrib (which pyIEM needs) had no prebuilt wheel for it yet, so it has to compile.
+
+Reasons for changes: both images failed their first build in GitHub Actions.
+
 2026.11.20 - First release
 
 * The relay: one Python service (aiohttp) in front of everything, with keys from keys.txt reloaded every 10 seconds, silence for anything that isn't an Isobar app with a working key, a per-key rate limit, and a per-address wrong-key limit.

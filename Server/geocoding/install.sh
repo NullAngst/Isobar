@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 # Image build step: install Open-Meteo's geocoding API from its release .deb.
 #
-# The .deb is unpacked rather than installed, so its systemd hooks never run
-# inside the container. The release tag is written to /etc/geocoding-release,
-# and the entrypoint downloads the matching database on first start.
+# The .deb is unpacked into a scratch folder and only the two programs are
+# copied out. Installing it, or unpacking it over /, would break the image:
+# the package ships a real ./lib/ folder (for its systemd unit), and on
+# Ubuntu /lib is a link to /usr/lib, so unpacking over / replaces that link
+# and takes every system library with it. The release tag is written to
+# /etc/geocoding-release, and the entrypoint downloads the matching database
+# on first start.
 #
 # Usage: install.sh [release tag or "latest"]
 
@@ -14,7 +18,7 @@ REPO="https://github.com/open-meteo/geocoding-api"
 TAG="${1:-latest}"
 
 missing=()
-for cmd in curl dpkg-deb mktemp ldd grep; do
+for cmd in curl dpkg-deb mktemp ldd grep install; do
     command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
 done
 if [ "${#missing[@]}" -gt 0 ]; then
@@ -39,11 +43,16 @@ trap 'rm -rf -- "$work"' EXIT
 
 deb="geocoding-api_${TAG}_jammy_amd64.deb"
 curl -fL --retry 3 -o "$work/$deb" "$REPO/releases/download/$TAG/$deb"
-dpkg-deb -x "$work/$deb" /
+dpkg-deb -x "$work/$deb" "$work/pkg"
 
-if [ ! -x /usr/local/bin/geocoding-api ]; then
-    printf 'install.sh: the package did not contain /usr/local/bin/geocoding-api\n' >&2
+if [ ! -f "$work/pkg/usr/local/bin/geocoding-api" ]; then
+    printf 'install.sh: the package did not contain usr/local/bin/geocoding-api\n' >&2
     exit 1
+fi
+install -m 0755 "$work/pkg/usr/local/bin/geocoding-api" /usr/local/bin/geocoding-api
+# Swift's crash reporter, which the geocoder calls to print a readable stack trace.
+if [ -f "$work/pkg/usr/local/bin/swift-backtrace" ]; then
+    install -m 0755 "$work/pkg/usr/local/bin/swift-backtrace" /usr/local/bin/swift-backtrace
 fi
 if ldd /usr/local/bin/geocoding-api | grep -q 'not found'; then
     printf 'install.sh: geocoding-api is missing libraries:\n' >&2
