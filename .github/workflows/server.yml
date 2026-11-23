@@ -128,10 +128,8 @@ jobs:
         run: |
           docker run --rm "$IMAGE:$GITHUB_REF_NAME-${{ matrix.arch }}" python -c "import isobar_relay.app, isobar_relay.nwws, pyiem.nws.products, nwws_receiver, geopandas, pygrib; print('relay imports fine')"
 
-      - name: Smoke test the geocoder
-        if: matrix.image == 'isobar-geocoding'
-        run: |
-          docker run --rm "$IMAGE:$GITHUB_REF_NAME-${{ matrix.arch }}" geocoding-api --help
+      # The geocoder's start check runs inside its Dockerfile, on the system
+      # it ships on, so a crash stops the build before anything is pushed.
 
       - name: Push this architecture
         run: docker push "$IMAGE:$GITHUB_REF_NAME-${{ matrix.arch }}"
