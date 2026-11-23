@@ -63,16 +63,20 @@ jobs:
           fi
 
   images:
-    name: Build and push ${{ matrix.image }}
+    name: Build ${{ matrix.image }} (${{ matrix.arch }})
     needs: checks
     if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    # Each architecture builds on its own kind of runner, so nothing runs
+    # under emulation. GitHub's ARM runners are free for public repos.
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
       packages: write
     strategy:
       fail-fast: false
       matrix:
+        image: [isobar-relay, isobar-geocoding, isobar-radar]
+        arch: [amd64, arm64]
         include:
           - image: isobar-relay
             context: Server/relay
@@ -80,6 +84,10 @@ jobs:
             context: Server/geocoding
           - image: isobar-radar
             context: Server/radar
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -106,21 +114,53 @@ jobs:
           owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
           name="ghcr.io/$owner/${{ matrix.image }}"
           echo "IMAGE=$name" >> "$GITHUB_ENV"
-          # --pull so the untagged base images are always the newest.
-          docker build --pull \
+          # --pull so the untagged base images are always the newest. No
+          # provenance attestation, so each push is one plain image that the
+          # join step below can combine.
+          docker buildx build --pull --load --provenance=false \
             --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
             --label "org.opencontainers.image.version=$GITHUB_REF_NAME" \
             --label "org.opencontainers.image.revision=$GITHUB_SHA" \
-            -t "$name:latest" -t "$name:$GITHUB_REF_NAME" "${{ matrix.context }}"
+            -t "$name:$GITHUB_REF_NAME-${{ matrix.arch }}" "${{ matrix.context }}"
 
       - name: Smoke test the relay
         if: matrix.image == 'isobar-relay'
         run: |
-          docker run --rm "$IMAGE:latest" python -c "import isobar_relay.app, isobar_relay.nwws, pyiem.nws.products, nwws_receiver, geopandas; print('relay imports fine')"
+          docker run --rm "$IMAGE:$GITHUB_REF_NAME-${{ matrix.arch }}" python -c "import isobar_relay.app, isobar_relay.nwws, pyiem.nws.products, nwws_receiver, geopandas, pygrib; print('relay imports fine')"
 
-      - name: Push
-        # latest is what compose.yml runs. The version tag is only there for a
-        # manual rollback after a bad release.
+      - name: Smoke test the geocoder
+        if: matrix.image == 'isobar-geocoding'
         run: |
-          docker push "$IMAGE:$GITHUB_REF_NAME"
-          docker push "$IMAGE:latest"
+          docker run --rm "$IMAGE:$GITHUB_REF_NAME-${{ matrix.arch }}" geocoding-api --help
+
+      - name: Push this architecture
+        run: docker push "$IMAGE:$GITHUB_REF_NAME-${{ matrix.arch }}"
+
+  join:
+    name: Publish ${{ matrix.image }}
+    needs: images
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [isobar-relay, isobar-geocoding, isobar-radar]
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Log in to the GitHub container registry
+        run: printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      # One tag that holds both architectures: Docker picks the right one on
+      # pull. latest is what compose.yml runs; the version tag is there for a
+      # manual rollback after a bad release.
+      - name: Join the architectures under latest and the version
+        run: |
+          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          name="ghcr.io/$owner/${{ matrix.image }}"
+          docker buildx imagetools create \
+            -t "$name:latest" -t "$name:$GITHUB_REF_NAME" \
+            "$name:$GITHUB_REF_NAME-amd64" "$name:$GITHUB_REF_NAME-arm64"
+          docker buildx imagetools inspect "$name:latest"
