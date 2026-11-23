@@ -11,7 +11,7 @@ from aiohttp.test_utils import TestServer
 from isobar_relay.app import Relay
 from tests.helpers import KEY_A, make_config
 
-ISOBAR = "Isobar/1.7.0 (test)"
+ISOBAR = "Isobar/1.8.0 (test)"
 
 
 def raw_request(port, path="/v1/status", agent=ISOBAR, key=KEY_A, https=True, extra=None, timeout=10):

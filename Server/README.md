@@ -23,7 +23,8 @@ Access is a key per person. No key, no data. Anything that isn't an Isobar app w
 ## Prerequisites
 
 - A Linux box with Docker and Docker Compose. Portainer is optional.
-- A CPU with AVX2. Open-Meteo's image needs it. Most x86 CPUs from 2013 on have it; `grep -c avx2 /proc/cpuinfo` prints a number above 0 if yours does.
+- A 64-bit CPU, x86 or ARM. Every image in the stack is built for both, and Docker pulls the right one. `uname -m` prints `x86_64` or `aarch64`; anything else (32-bit ARM, for one) won't run it.
+- On x86, a CPU with AVX2, since Open-Meteo's x86 image is compiled for Skylake-era chips. Most x86 CPUs from 2013 on have it; `grep -c avx2 /proc/cpuinfo` prints a number above 0 if yours does. ARM has no such requirement.
 - 16 GB of RAM to be comfortable (8 GB is the floor).
 - An SSD with 50 GB free to start and room to grow to 150 GB. Put it on its own SSD if you can, not your file server's data disks.
 - A domain or subdomain you control, like `weather.example.net`.

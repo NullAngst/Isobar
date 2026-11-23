@@ -1,24 +1,25 @@
 #!/usr/bin/env bash
-# Image build step: install Open-Meteo's geocoding API from its release .deb.
+# Image build step: build Open-Meteo's geocoding API from source and put the
+# programs in an output folder for the final image to copy.
 #
-# The .deb is unpacked into a scratch folder and only the two programs are
-# copied out. Installing it, or unpacking it over /, would break the image:
-# the package ships a real ./lib/ folder (for its systemd unit), and on
-# Ubuntu /lib is a link to /usr/lib, so unpacking over / replaces that link
-# and takes every system library with it. The release tag is written to
-# /etc/geocoding-release, and the entrypoint downloads the matching database
-# on first start.
+# Open-Meteo only publishes the geocoder as an x86-64 .deb, so building from
+# source is the one way that works on both x86-64 and ARM servers. The build
+# command is the one Open-Meteo's own release workflow uses. The release tag
+# goes in RELEASE in the output folder, and the entrypoint downloads the
+# place database built for that release on first start.
 #
-# Usage: install.sh [release tag or "latest"]
+# Usage: install.sh <release tag or "latest"> <output folder>
+# The programs land in <output folder>/bin, the tag in <output folder>/RELEASE.
 
 set -euo pipefail
 export LC_ALL=C
 
 REPO="https://github.com/open-meteo/geocoding-api"
 TAG="${1:-latest}"
+OUT="${2:-/out}"
 
 missing=()
-for cmd in curl dpkg-deb mktemp ldd grep install; do
+for cmd in curl git swift install mktemp ldd grep; do
     command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
 done
 if [ "${#missing[@]}" -gt 0 ]; then
@@ -38,27 +39,26 @@ case "$TAG" in
         ;;
 esac
 
-work="$(mktemp -d "${TMPDIR:-/tmp}/geocoding.XXXXXX")"
-trap 'rm -rf -- "$work"' EXIT
+src="$(mktemp -d "${TMPDIR:-/tmp}/geocoding.XXXXXX")"
+trap 'rm -rf -- "$src"' EXIT
 
-deb="geocoding-api_${TAG}_jammy_amd64.deb"
-curl -fL --retry 3 -o "$work/$deb" "$REPO/releases/download/$TAG/$deb"
-dpkg-deb -x "$work/$deb" "$work/pkg"
+git clone --quiet --depth 1 --branch "$TAG" "$REPO.git" "$src"
+cd "$src" || exit 1
+swift package resolve
+# Swift's own libraries are linked in, so the program runs on plain Ubuntu.
+swift build -c release --product Run -Xswiftc -static-stdlib
 
-if [ ! -f "$work/pkg/usr/local/bin/geocoding-api" ]; then
-    printf 'install.sh: the package did not contain usr/local/bin/geocoding-api\n' >&2
-    exit 1
-fi
-install -m 0755 "$work/pkg/usr/local/bin/geocoding-api" /usr/local/bin/geocoding-api
+mkdir -p -- "$OUT/bin"
+install -m 0755 .build/release/Run "$OUT/bin/geocoding-api"
 # Swift's crash reporter, which the geocoder calls to print a readable stack trace.
-if [ -f "$work/pkg/usr/local/bin/swift-backtrace" ]; then
-    install -m 0755 "$work/pkg/usr/local/bin/swift-backtrace" /usr/local/bin/swift-backtrace
+if [ -f /usr/libexec/swift/linux/swift-backtrace-static ]; then
+    install -m 0755 /usr/libexec/swift/linux/swift-backtrace-static "$OUT/bin/swift-backtrace"
 fi
-if ldd /usr/local/bin/geocoding-api | grep -q 'not found'; then
+if ldd "$OUT/bin/geocoding-api" | grep -q 'not found'; then
     printf 'install.sh: geocoding-api is missing libraries:\n' >&2
-    ldd /usr/local/bin/geocoding-api | grep 'not found' >&2
+    ldd "$OUT/bin/geocoding-api" | grep 'not found' >&2
     exit 1
 fi
 
-printf '%s\n' "$TAG" >/etc/geocoding-release
-printf 'install.sh: geocoding-api %s installed\n' "$TAG"
+printf '%s\n' "$TAG" >"$OUT/RELEASE"
+printf 'install.sh: geocoding-api %s built for %s\n' "$TAG" "$(uname -m)"

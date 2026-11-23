@@ -1,5 +1,12 @@
 # Changes
 
+2026.11.23 - Server images for ARM
+
+* No app changes. The version moves to 1.8.0 because the server image workflow checks the tag against both the app and relay versions.
+* Release steps in the README now describe the server images building for x86 and ARM.
+
+Reasons for changes: the server stack wouldn't pull on an ARM box. See Server/changes.md for the details.
+
 2026.11.20 - Isobar Server support / Radar fix
 
 * Settings, Servers: add one or more Isobar Servers (label, address, key, on or off), reorder them by dragging on the desktop or with the arrows on Android, and Test each one. Test tells apart "the server is down" from "the server is up but isn't answering this key", since a server never says "wrong key".

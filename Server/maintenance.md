@@ -73,7 +73,7 @@ Log the om-data volume's size weekly for the first month, then every check-up. P
 
 ### 8. Place search
 
-`docker compose logs --since 168h geocoding | tail` should show it serving. A new geocoder release comes with the next image build; on its first start it downloads the matching database and checks it before swapping it in, so expect a few minutes of place search failing over to the app's direct geocoder after an update.
+`docker compose logs --since 168h geocoding | tail` should show it serving. The image builds the geocoder from source, since Open-Meteo only publishes an x86 package, so a new geocoder release comes with the next image build; on its first start it downloads the matching database and checks it before swapping it in, so expect a few minutes of place search failing over to the app's direct geocoder after an update.
 
 ### 9. NWS sources the relay reads
 

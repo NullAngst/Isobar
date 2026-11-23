@@ -1,5 +1,16 @@
 # Server changes
 
+2026.11.23 - ARM support
+
+* Every image the stack runs now comes in x86 and ARM (linux/amd64 and linux/arm64), under the same `latest` tag. Docker picks the right one on pull.
+* The image workflow builds each image twice, on a normal runner and on GitHub's ARM runner, then joins the two into one multi-arch tag with `docker buildx imagetools create`. No emulation.
+* Geocoding image: the geocoder is now compiled from source in Swift's official image with the same build command Open-Meteo's release uses, then copied onto plain Ubuntu 22.04. Open-Meteo only ships the geocoder as an x86 .deb, so there was nothing to unpack on ARM. The final image checks the program's libraries again on the system that runs it.
+* Relay and radar images needed no changes: every compiled Python package the relay uses has ARM wheels except pygrib, which already compiles on both, and GDAL's image is multi-arch.
+* Version 1.8.0, since the image workflow checks the tag against the version.
+* Hosting guide: the CPU requirement now covers ARM. AVX2 only applies on x86.
+
+Reasons for changes: the stack wouldn't pull on an ARM server ("no matching manifest for linux/arm64/v8"). Open-Meteo's own image already ships for ARM, so the three Isobar images were the only thing missing.
+
 2026.11.23 - Build fixes
 
 * Geocoding image: the geocoder's .deb is now unpacked into a scratch folder and only its two programs are copied out. Unpacking it over / replaced Ubuntu's /lib link with the package's own lib folder (it ships a systemd unit there), which removed every system library and broke the build.
