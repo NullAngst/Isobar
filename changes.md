@@ -1,5 +1,11 @@
 # Changes
 
+2026.11.24 - Documentation
+
+* No app changes. The README now opens with screenshots of the Now, Forecast and Outlooks views (Android, dark theme, Atlanta, Georgia), stored under docs/screenshots/.
+
+Reasons for changes: the README described every view but showed none of them.
+
 2026.11.23 - Server images for ARM
 
 * No app changes. The version moves to 1.8.0 because the server image workflow checks the tag against both the app and relay versions.
