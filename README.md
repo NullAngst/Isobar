@@ -4,6 +4,14 @@ Isobar is a weather and radar app for Linux, Windows, macOS and Android, for peo
 
 Type in a city, ZIP code or `lat, lon` (or tap "Use my location" on Android) and you get current conditions, an hourly chart, a 10-day forecast, active alerts with their hail size, wind and damage threat, the local forecast discussion and hazardous weather outlook, a radar map with storm reports, storm cells and hurricane cones, and the Storm Prediction Center outlooks for days 1 through 8.
 
+<p align="center">
+  <img src="docs/screenshots/now.png" alt="Now view for Atlanta, Georgia: current conditions, next 12 hours chart, wind, humidity, pressure and visibility" width="30%">
+  <img src="docs/screenshots/forecast.png" alt="Forecast view for Atlanta, Georgia: 24 hour chart with wind and the 10-day list" width="30%">
+  <img src="docs/screenshots/outlooks.png" alt="Outlooks view for Atlanta, Georgia: SPC day 1 categorical outlook with tornado, wind and hail odds at the location" width="30%">
+</p>
+
+<p align="center"><sub>Now, Forecast and Outlooks on Android, dark theme, Atlanta, Georgia.</sub></p>
+
 ## What's in it
 
 - **Now**: active alerts, current conditions, how it compares with this time yesterday, when rain or snow starts or stops in the next 3 hours, NWS forecast text, today's SPC risk, the next 12 hours as a chart, then wind, humidity, pressure trend, visibility, UV and air quality.
